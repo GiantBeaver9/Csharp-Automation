@@ -1,0 +1,36 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+
+    "//": "----- Local LLM (OpenAI-compatible: Ollama, LM Studio, llama.cpp, vLLM...) -----",
+    "Llm__BaseUrl": "http://localhost:11434/v1",
+    "Llm__Model": "llama3.1",
+    "Llm__ApiKey": "not-needed",
+    "Llm__MaxTokens": "1024",
+    "Llm__Temperature": "0.3",
+    "Llm__MaxInputChars": "12000",
+    "Llm__TimeoutSeconds": "180",
+
+    "//1": "----- Email (Gmail SMTP shown; use a 16-char App Password, not your login password) -----",
+    "Email__SmtpHost": "smtp.gmail.com",
+    "Email__SmtpPort": "587",
+    "Email__UseStartTls": "true",
+    "Email__Username": "youraddress@gmail.com",
+    "Email__Password": "your-16-char-app-password",
+    "Email__FromAddress": "youraddress@gmail.com",
+    "Email__FromName": "Automation Bot",
+    "Email__ToAddress": "youraddress@gmail.com",
+
+    "//2": "----- Weather (Open-Meteo, no API key; set your own lat/lon) -----",
+    "Weather__Latitude": "40.7128",
+    "Weather__Longitude": "-74.0060",
+    "Weather__LocationName": "New York",
+    "Weather__TemperatureUnit": "fahrenheit",
+    "Weather__WindSpeedUnit": "mph",
+
+    "//3": "----- Pages to summarize (comma-separated) -----",
+    "Summary__Urls": "https://news.ycombinator.com, https://www.bbc.com/news"
+  }
+}

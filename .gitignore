@@ -1,0 +1,19 @@
+# Azure Functions
+local.settings.json
+bin/
+obj/
+.azurefunctions/
+
+# .NET
+*.user
+*.suo
+project.lock.json
+artifacts/
+
+# Rider / VS
+.idea/
+.vs/
+
+# OS
+.DS_Store
+Thumbs.db
