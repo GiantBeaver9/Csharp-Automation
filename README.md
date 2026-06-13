@@ -146,6 +146,22 @@ use Application settings instead).
    This runs the full pipeline immediately and returns the rendered digest (and emails
    it). Locally the HTTP function key is not enforced, so it works as-is.
 
+## Email formatting & highlights
+
+The digest is HTML, so it uses **bold, colors, highlights, and bullet lists** (inline CSS
+only — that's all email clients reliably render). Highlighting is rule-based and centralized:
+
+- **Temperatures** at/above the hot threshold render red, at/below the cold threshold blue
+  (`Constants.Weather.HotF/ColdF/HotC/ColdC`).
+- **Raw METAR/TAF** tokens are color-coded: freezing precip / icing and snow **blue**,
+  thunderstorms / hail **red**, wind gusts **orange** (rules in
+  `WeatherHighlighter` in `Services/HtmlFormat.cs`).
+- **Flight categories** are colored VFR/MVFR/IFR/LIFR.
+
+Tweak the palette in one place (`Constants.Colors`), thresholds in `Constants.Weather`, and
+add new token rules in `WeatherHighlighter.ClassifyToken`. The `HtmlFormat` helper
+(`Bold`, `Color`, `ColorBold`, `Highlight`, `Bullets`) is reusable for any new section.
+
 ## Changing the schedule
 
 The schedule is the `DigestSchedule` app setting (the timer binds to it via

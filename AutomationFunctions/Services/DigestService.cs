@@ -56,9 +56,14 @@ public class DigestService : IDigestService
         await AppendWebsiteSummariesAsync(body, ct);
         await AppendInboxSummaryAsync(body, ct);
 
-        body.Append($"<p style=\"color:#888;font-size:12px\">Generated {DateTimeOffset.Now:f}</p>");
+        body.Append($"<p style=\"color:{Constants.Colors.Muted};font-size:12px\">Generated {DateTimeOffset.Now:f}</p>");
 
-        return new Digest($"{Constants.Digest.SubjectPrefix} — {DateTime.Now:MMM d}", body.ToString());
+        // Wrap in a base style — email clients only honor inline CSS.
+        var html =
+            "<div style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45;color:#222\">"
+            + body + "</div>";
+
+        return new Digest($"{Constants.Digest.SubjectPrefix} — {DateTime.Now:MMM d}", html);
     }
 
     private async Task AppendWeatherAsync(StringBuilder body, CancellationToken ct)
@@ -66,12 +71,15 @@ public class DigestService : IDigestService
         try
         {
             var w = await _weather.GetCurrentAsync(ct);
+            var isCelsius = w.TemperatureUnit.Contains('C');
+            string Temp(double t) => WeatherHighlighter.Temperature(t, w.TemperatureUnit, isCelsius);
+
             body.Append($"""
                 <h2>Weather — {Enc(w.Location)}</h2>
                 <ul>
-                  <li><strong>Now:</strong> {w.Temperature:0.#}{w.TemperatureUnit} ({Enc(w.Description)})</li>
-                  <li><strong>Feels like:</strong> {w.ApparentTemperature:0.#}{w.TemperatureUnit}</li>
-                  <li><strong>High / Low:</strong> {w.TempMax:0.#}{w.TemperatureUnit} / {w.TempMin:0.#}{w.TemperatureUnit}</li>
+                  <li><strong>Now:</strong> {Temp(w.Temperature)} ({HtmlFormat.Bold(w.Description)})</li>
+                  <li><strong>Feels like:</strong> {Temp(w.ApparentTemperature)}</li>
+                  <li><strong>High / Low:</strong> {Temp(w.TempMax)} / {Temp(w.TempMin)}</li>
                   <li><strong>Humidity:</strong> {w.Humidity}% &middot; <strong>Wind:</strong> {w.WindSpeed:0.#} {Enc(w.WindSpeedUnit)}</li>
                 </ul>
                 """);
@@ -116,16 +124,18 @@ public class DigestService : IDigestService
 
             if (!string.IsNullOrWhiteSpace(a.RawMetar))
             {
-                body.Append($"<p style=\"margin:2px 0\"><strong>METAR:</strong> <code>{Enc(a.RawMetar)}</code></p>");
+                body.Append(
+                    $"<p style=\"margin:2px 0\"><strong>METAR:</strong> <code>{WeatherHighlighter.Metar(a.RawMetar)}</code></p>");
             }
             else
             {
-                body.Append("<p style=\"color:#b00\">No current METAR available.</p>");
+                body.Append($"<p style=\"color:{Constants.Colors.Storm}\">No current METAR available.</p>");
             }
 
             if (!string.IsNullOrWhiteSpace(a.RawTaf))
             {
-                body.Append($"<p style=\"margin:2px 0\"><strong>TAF:</strong> <code>{Enc(a.RawTaf)}</code></p>");
+                body.Append(
+                    $"<p style=\"margin:2px 0\"><strong>TAF:</strong> <code>{WeatherHighlighter.Metar(a.RawTaf)}</code></p>");
             }
         }
     }

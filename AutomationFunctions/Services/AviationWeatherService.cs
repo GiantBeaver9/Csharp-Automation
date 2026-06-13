@@ -103,10 +103,10 @@ public static class FlightCategory
 {
     public static string Color(string? category) => category?.ToUpperInvariant() switch
     {
-        "VFR" => "#118811",
-        "MVFR" => "#1144cc",
-        "IFR" => "#cc1111",
-        "LIFR" => "#cc11cc",
-        _ => "#666666",
+        "VFR" => Constants.Colors.Vfr,
+        "MVFR" => Constants.Colors.Mvfr,
+        "IFR" => Constants.Colors.Ifr,
+        "LIFR" => Constants.Colors.Lifr,
+        _ => Constants.Colors.Muted,
     };
 }

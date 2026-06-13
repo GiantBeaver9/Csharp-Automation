@@ -51,6 +51,30 @@ public static class Constants
         public const string CurrentFields =
             "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m";
         public const string DailyFields = "temperature_2m_max,temperature_2m_min";
+
+        // Highlight thresholds: the digest colors temps at/above Hot red, at/below Cold blue.
+        public const double HotF = 85;
+        public const double ColdF = 32;
+        public const double HotC = 29;
+        public const double ColdC = 0;
+    }
+
+    /// <summary>Inline colors used to highlight the email (tweak in one place).</summary>
+    public static class Colors
+    {
+        public const string Hot = "#cc1111";       // red — high temps
+        public const string Cold = "#1144cc";      // blue — freezing temps
+        public const string Ice = "#1144cc";       // blue — icing / freezing precip / snow
+        public const string Storm = "#cc1111";     // red — thunderstorms / hail
+        public const string Caution = "#cc7a00";   // orange — wind gusts
+        public const string Highlight = "#fff3b0"; // yellow background — emphasis
+        public const string Muted = "#666666";
+
+        // Flight categories
+        public const string Vfr = "#118811";
+        public const string Mvfr = "#1144cc";
+        public const string Ifr = "#cc1111";
+        public const string Lifr = "#cc11cc";
     }
 
     /// <summary>Aviation weather (METAR/TAF) defaults — FAA/NOAA Aviation Weather Center.</summary>
