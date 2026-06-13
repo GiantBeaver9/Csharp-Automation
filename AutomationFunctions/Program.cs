@@ -25,6 +25,7 @@ var host = new HostBuilder()
         services.AddOptions<WeatherOptions>().Bind(config.GetSection(WeatherOptions.SectionName));
         services.AddOptions<SummaryOptions>().Bind(config.GetSection(SummaryOptions.SectionName));
         services.AddOptions<MailScanOptions>().Bind(config.GetSection(MailScanOptions.SectionName));
+        services.AddOptions<AviationOptions>().Bind(config.GetSection(AviationOptions.SectionName));
 
         services.AddHttpClient();
 
@@ -33,6 +34,7 @@ var host = new HostBuilder()
         services.AddSingleton<ILlmService, OpenAiCompatibleLlmService>();
         services.AddSingleton<IEmailService, SmtpEmailService>();
         services.AddSingleton<IWeatherService, OpenMeteoWeatherService>();
+        services.AddSingleton<IAviationWeatherService, AviationWeatherService>();
         services.AddSingleton<IMailScanner, ImapMailScanner>();
 
         // Orchestrator that composes the building blocks into one report.

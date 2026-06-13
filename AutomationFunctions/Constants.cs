@@ -53,6 +53,16 @@ public static class Constants
         public const string DailyFields = "temperature_2m_max,temperature_2m_min";
     }
 
+    /// <summary>Aviation weather (METAR/TAF) defaults — FAA/NOAA Aviation Weather Center.</summary>
+    public static class Aviation
+    {
+        /// <summary>Whether to also fetch the TAF (terminal forecast) alongside the METAR.</summary>
+        public const bool IncludeTaf = true;
+
+        /// <summary>Base of the keyless AWC data API; "/metar" and "/taf" are appended.</summary>
+        public const string ApiBaseUrl = "https://aviationweather.gov/api/data";
+    }
+
     /// <summary>IMAP inbox-scan defaults.</summary>
     public static class MailScan
     {

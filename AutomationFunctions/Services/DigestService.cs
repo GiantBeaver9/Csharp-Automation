@@ -11,7 +11,7 @@ public record Digest(string Subject, string HtmlBody);
 
 public interface IDigestService
 {
-    /// <summary>Runs the full pipeline (weather → website summaries → inbox scan) and builds one report.</summary>
+    /// <summary>Runs the full pipeline (weather → aviation → website summaries → inbox scan) and builds one report.</summary>
     Task<Digest> BuildAsync(CancellationToken ct = default);
 }
 
@@ -22,6 +22,7 @@ public interface IDigestService
 public class DigestService : IDigestService
 {
     private readonly IWeatherService _weather;
+    private readonly IAviationWeatherService _aviation;
     private readonly IWebPageFetcher _fetcher;
     private readonly ILlmService _llm;
     private readonly IMailScanner _mailScanner;
@@ -30,6 +31,7 @@ public class DigestService : IDigestService
 
     public DigestService(
         IWeatherService weather,
+        IAviationWeatherService aviation,
         IWebPageFetcher fetcher,
         ILlmService llm,
         IMailScanner mailScanner,
@@ -37,6 +39,7 @@ public class DigestService : IDigestService
         ILogger<DigestService> logger)
     {
         _weather = weather;
+        _aviation = aviation;
         _fetcher = fetcher;
         _llm = llm;
         _mailScanner = mailScanner;
@@ -49,6 +52,7 @@ public class DigestService : IDigestService
         var body = new StringBuilder();
 
         await AppendWeatherAsync(body, ct);
+        await AppendAviationAsync(body, ct);
         await AppendWebsiteSummariesAsync(body, ct);
         await AppendInboxSummaryAsync(body, ct);
 
@@ -76,6 +80,53 @@ public class DigestService : IDigestService
         {
             _logger.LogError(ex, "Weather step failed");
             body.Append("<h2>Weather</h2>").Append(Error(ex));
+        }
+    }
+
+    private async Task AppendAviationAsync(StringBuilder body, CancellationToken ct)
+    {
+        IReadOnlyList<AirportWeather> airports;
+        try
+        {
+            airports = await _aviation.GetAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Aviation weather step failed");
+            body.Append("<h2>Aviation Weather</h2>").Append(Error(ex));
+            return;
+        }
+
+        if (airports.Count == 0)
+        {
+            return; // none configured
+        }
+
+        body.Append("<h2>Aviation Weather</h2>");
+        foreach (var a in airports)
+        {
+            var heading = string.IsNullOrWhiteSpace(a.Name) ? a.Icao : $"{a.Icao} — {a.Name}";
+            body.Append($"<h3>{Enc(heading)}</h3>");
+
+            if (!string.IsNullOrWhiteSpace(a.FlightCategory))
+            {
+                body.Append(
+                    $"<p><strong style=\"color:{FlightCategory.Color(a.FlightCategory)}\">{Enc(a.FlightCategory)}</strong></p>");
+            }
+
+            if (!string.IsNullOrWhiteSpace(a.RawMetar))
+            {
+                body.Append($"<p style=\"margin:2px 0\"><strong>METAR:</strong> <code>{Enc(a.RawMetar)}</code></p>");
+            }
+            else
+            {
+                body.Append("<p style=\"color:#b00\">No current METAR available.</p>");
+            }
+
+            if (!string.IsNullOrWhiteSpace(a.RawTaf))
+            {
+                body.Append($"<p style=\"margin:2px 0\"><strong>TAF:</strong> <code>{Enc(a.RawTaf)}</code></p>");
+            }
         }
     }
 

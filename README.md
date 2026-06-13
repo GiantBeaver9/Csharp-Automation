@@ -3,12 +3,12 @@
 A C# **Azure Functions** app (isolated worker, .NET 8) for personal automation on a
 cron schedule. One timer runs the whole pipeline:
 
-> **get weather → summarize the websites you list → scan your inbox (optional) →
-> email yourself one digest.**
+> **get weather → aviation weather (METAR/TAF) → summarize the websites you list →
+> scan your inbox (optional) → email yourself one digest.**
 
 | Function | Trigger | What it does |
 | --- | --- | --- |
-| `DailyDigestTimer` | Daily 07:00 | Builds the digest (weather + website summaries + inbox summary) and emails it to you |
+| `DailyDigestTimer` | Daily 07:00 | Builds the digest (weather + aviation + website summaries + inbox summary) and emails it to you |
 
 It also has an HTTP twin so you can run it on demand without waiting for the clock:
 
@@ -16,8 +16,9 @@ It also has an HTTP twin so you can run it on demand without waiting for the clo
 | --- | --- |
 | `GET/POST /api/run/digest` | the full digest pipeline |
 
-Under the hood it's composable building blocks — **keyless weather**, a **local LLM**
-summarizer, an **IMAP inbox scanner**, and **SMTP email** — assembled by `DigestService`.
+Under the hood it's composable building blocks — **keyless weather**, **aviation
+weather** (FAA/NOAA METAR/TAF by ICAO code), a **local LLM** summarizer, an **IMAP inbox
+scanner**, and **SMTP email** — assembled by `DigestService`.
 The digest *builds content*; *delivery* is a separate step (email today), so swapping in
 an app/push channel later is just a new sender.
 
@@ -37,7 +38,8 @@ AutomationFunctions/
 │   ├── OpenAiCompatibleLlmService.cs# local LLM via /chat/completions
 │   ├── ImapMailScanner.cs           # read recent mail over IMAP (MailKit)
 │   ├── SmtpEmailService.cs          # send mail over SMTP (MailKit)
-│   └── OpenMeteoWeatherService.cs   # current weather, no API key
+│   ├── OpenMeteoWeatherService.cs   # current weather, no API key
+│   └── AviationWeatherService.cs    # METAR/TAF by ICAO code, no API key
 └── Options/                   # strongly-typed config sections
 ```
 
@@ -79,6 +81,10 @@ add another `[TimerTrigger]` function under `Functions/`.
      \*Microsoft has been disabling SMTP basic-auth on personal Outlook accounts; if it
      rejects you, Gmail is the reliable free option.
    - **Weather** — set `Weather__Latitude` / `Weather__Longitude` to your location.
+   - **Aviation (optional)** — set `Aviation__Airports` to comma-separated ICAO codes
+     (e.g. `KJFK,KBOS`); empty skips the section. `Aviation__IncludeTaf` controls whether
+     the forecast is fetched too. Best set via User Secrets (below) so your airports stay
+     out of source.
    - **Summary** — set `Summary__Urls` to a comma-separated list of pages.
    - **Inbox scan (optional)** — set `MailScan__Enabled` to `true` and fill in the
      `MailScan__Accounts__0__*` (Gmail) and `__1__*` (Outlook) blocks. Use IMAP host
@@ -117,6 +123,7 @@ passwords in `local.settings.json`, store them in the per-user secret store
 cd AutomationFunctions
 dotnet user-secrets set "Email:Password" "your-app-password"
 dotnet user-secrets set "MailScan:Accounts:0:Password" "your-app-password"
+dotnet user-secrets set "Aviation:Airports" "KJFK,KBOS"   # your airports, ICAO codes
 ```
 
 `Program.cs` loads these automatically in local dev and ignores them in Azure (where you
@@ -159,8 +166,8 @@ Schedules run in **UTC** by default. To use local time, set `WEBSITE_TIME_ZONE`
 func azure functionapp publish <YourFunctionAppName>
 ```
 
-Then add every key from `local.settings.json` (LLM, Email, Weather, Summary, MailScan) to
-the Function App's **Application settings**. Note: a cloud-hosted Function App cannot reach
+Then add every key from `local.settings.json` (LLM, Email, Weather, Aviation, Summary,
+MailScan) to the Function App's **Application settings**. Note: a cloud-hosted Function App cannot reach
 a `localhost` LLM — for cloud runs, expose your model at a reachable URL (tunnel, VM,
 or hosted endpoint) and update `Llm__BaseUrl`. For a purely local LLM, run the Functions
 host on your own machine/VM instead.

@@ -36,6 +36,10 @@
     "//3": "----- Pages to summarize (comma-separated) -----",
     "Summary__Urls": "https://news.ycombinator.com, https://www.bbc.com/news",
 
+    "//3b": "----- Aviation weather (METAR/TAF, keyless). ICAO codes; prefer User Secrets: dotnet user-secrets set \"Aviation:Airports\" \"KJFK,KBOS\". Empty = section skipped. -----",
+    "Aviation__Airports": "",
+    "Aviation__IncludeTaf": "true",
+
     "//4": "----- Inbox scan over IMAP. Enabled=false skips it. Gmail: enable IMAP + use App Password. Outlook personal accounts may require an app password / OAuth2. -----",
     "MailScan__Enabled": "false",
     "MailScan__LookbackHours": "24",
