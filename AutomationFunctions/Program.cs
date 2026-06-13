@@ -6,6 +6,14 @@ using Microsoft.Extensions.Hosting;
 
 var host = new HostBuilder()
     .ConfigureFunctionsWorkerDefaults()
+    .ConfigureAppConfiguration(config =>
+    {
+        // Local-dev secrets live outside the repo (~/.microsoft/usersecrets/...), so the
+        // Gmail/IMAP passwords never sit in a project file. Set them with, e.g.:
+        //   dotnet user-secrets set "Email:Password" "your-app-password"
+        // This is a no-op in Azure — there, use the Function App's Application settings.
+        config.AddUserSecrets(typeof(Program).Assembly, optional: true);
+    })
     .ConfigureServices((context, services) =>
     {
         var config = context.Configuration;

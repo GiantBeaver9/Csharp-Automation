@@ -27,11 +27,12 @@ public class DailyDigestFunction
         _logger = logger;
     }
 
-    // Daily at 07:00. NCRONTAB: {sec} {min} {hour} {day} {month} {day-of-week}. UTC unless
-    // WEBSITE_TIME_ZONE (Windows) / TZ (Linux) is set.
+    // Schedule comes from the DigestSchedule app setting (%...%), defaulting to daily 07:00
+    // via local.settings.json. NCRONTAB: {sec} {min} {hour} {day} {month} {day-of-week}.
+    // Times are UTC unless WEBSITE_TIME_ZONE (Windows) / TZ (Linux) is set.
     [Function("DailyDigestTimer")]
     public async Task RunTimer(
-        [TimerTrigger("0 0 7 * * *")] TimerInfo timer,
+        [TimerTrigger("%DigestSchedule%")] TimerInfo timer,
         CancellationToken ct)
     {
         await RunAsync(ct);

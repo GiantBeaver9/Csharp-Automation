@@ -93,6 +93,31 @@ add another `[TimerTrigger]` function under `Functions/`.
    > which binds to `EmailOptions.SmtpHost`. List items are indexed
    > (`MailScan__Accounts__0__ImapHost`).
 
+### Where configuration lives
+
+Azure Functions doesn't use `appsettings.json`. Config comes from three layers, each
+overriding the one before:
+
+| Layer | Scope | Use for |
+| --- | --- | --- |
+| `Options` class defaults (in code) | fallback | non-secret defaults like ports, timeouts, units |
+| `local.settings.json` → env vars | local dev | everything; the `.example` lists every key |
+| **User Secrets** (`secrets.json`) | local dev | secrets, kept out of the project folder entirely |
+| **Application settings** | Azure | everything, including secrets, in the cloud |
+
+**Keep secrets out of files with User Secrets.** Instead of putting your Gmail/IMAP
+passwords in `local.settings.json`, store them in the per-user secret store
+(`~/.microsoft/usersecrets/...`, never in the repo). Use `:` as the separator here:
+
+```bash
+cd AutomationFunctions
+dotnet user-secrets set "Email:Password" "your-app-password"
+dotnet user-secrets set "MailScan:Accounts:0:Password" "your-app-password"
+```
+
+`Program.cs` loads these automatically in local dev and ignores them in Azure (where you
+use Application settings instead).
+
 3. **Run it locally:**
 
    ```bash
@@ -110,10 +135,11 @@ add another `[TimerTrigger]` function under `Functions/`.
    This runs the full pipeline immediately and returns the rendered digest (and emails
    it). Locally the HTTP function key is not enforced, so it works as-is.
 
-## Changing the schedules
+## Changing the schedule
 
-Edit the `[TimerTrigger("...")]` NCRONTAB expressions. Format is
-`{second} {minute} {hour} {day} {month} {day-of-week}`:
+The schedule is the `DigestSchedule` app setting (the timer binds to it via
+`%DigestSchedule%`), so you change *when* it runs without touching code. It's an
+NCRONTAB expression — `{second} {minute} {hour} {day} {month} {day-of-week}`:
 
 - `0 0 7 * * *` — every day at 07:00
 - `0 0 * * * *` — top of every hour

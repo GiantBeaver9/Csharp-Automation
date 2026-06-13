@@ -4,6 +4,9 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
 
+    "//0": "----- When the digest runs (NCRONTAB: sec min hour day month day-of-week) -----",
+    "DigestSchedule": "0 0 7 * * *",
+
     "//": "----- Local LLM (OpenAI-compatible: Ollama, LM Studio, llama.cpp, vLLM...) -----",
     "Llm__BaseUrl": "http://localhost:11434/v1",
     "Llm__Model": "llama3.1",
