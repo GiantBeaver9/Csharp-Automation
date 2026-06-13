@@ -1,8 +1,9 @@
-using System.Net;
-using System.Net.Mail;
 using AutomationFunctions.Options;
+using MailKit.Net.Smtp;
+using MailKit.Security;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MimeKit;
 
 namespace AutomationFunctions.Services;
 
@@ -12,6 +13,7 @@ public interface IEmailService
     Task SendAsync(string subject, string htmlBody, CancellationToken ct = default);
 }
 
+/// <summary>Sends mail over SMTP using MailKit (modern TLS; pairs with the IMAP scanner).</summary>
 public class SmtpEmailService : IEmailService
 {
     private readonly EmailOptions _options;
@@ -31,24 +33,19 @@ public class SmtpEmailService : IEmailService
                 "Email is not configured. Set Email__FromAddress and Email__ToAddress (and SMTP credentials).");
         }
 
-        using var message = new MailMessage
-        {
-            From = new MailAddress(_options.FromAddress, _options.FromName),
-            Subject = subject,
-            Body = htmlBody,
-            IsBodyHtml = true,
-        };
-        message.To.Add(_options.ToAddress);
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress(_options.FromName, _options.FromAddress));
+        message.To.Add(MailboxAddress.Parse(_options.ToAddress));
+        message.Subject = subject;
+        message.Body = new BodyBuilder { HtmlBody = htmlBody }.ToMessageBody();
 
-        using var client = new SmtpClient(_options.SmtpHost, _options.SmtpPort)
-        {
-            EnableSsl = true, // STARTTLS on 587 or implicit SSL on 465
-            DeliveryMethod = SmtpDeliveryMethod.Network,
-            Credentials = new NetworkCredential(_options.Username, _options.Password),
-        };
+        using var client = new SmtpClient();
+        var secureOptions = _options.UseStartTls ? SecureSocketOptions.StartTls : SecureSocketOptions.SslOnConnect;
 
         _logger.LogInformation("Sending email \"{Subject}\" to {To}", subject, _options.ToAddress);
-        ct.ThrowIfCancellationRequested();
-        await client.SendMailAsync(message, ct);
+        await client.ConnectAsync(_options.SmtpHost, _options.SmtpPort, secureOptions, ct);
+        await client.AuthenticateAsync(_options.Username, _options.Password, ct);
+        await client.SendAsync(message, ct);
+        await client.DisconnectAsync(true, ct);
     }
 }

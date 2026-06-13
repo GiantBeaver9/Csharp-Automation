@@ -1,21 +1,25 @@
 # Csharp-Automation
 
 A C# **Azure Functions** app (isolated worker, .NET 8) for personal automation on a
-cron schedule. It ships with three composable building blocks — a **local LLM**
-summarizer, **SMTP email**, and **keyless weather** — wired into two example
-timer jobs:
+cron schedule. One timer runs the whole pipeline:
+
+> **get weather → summarize the websites you list → scan your inbox (optional) →
+> email yourself one digest.**
 
 | Function | Trigger | What it does |
 | --- | --- | --- |
-| `WeatherReportTimer` | Daily 06:30 | Fetches weather (Open-Meteo) and emails you a report |
-| `WebpageSummaryTimer` | Daily 07:00 | Fetches configured pages, summarizes each with your local LLM, emails a digest |
+| `DailyDigestTimer` | Daily 07:00 | Builds the digest (weather + website summaries + inbox summary) and emails it to you |
 
-Each job also has an HTTP twin so you can run it on demand without waiting for the clock:
+It also has an HTTP twin so you can run it on demand without waiting for the clock:
 
 | Endpoint | Runs |
 | --- | --- |
-| `GET/POST /api/run/weather` | the weather job |
-| `GET/POST /api/run/summary` | the summary job |
+| `GET/POST /api/run/digest` | the full digest pipeline |
+
+Under the hood it's composable building blocks — **keyless weather**, a **local LLM**
+summarizer, an **IMAP inbox scanner**, and **SMTP email** — assembled by `DigestService`.
+The digest *builds content*; *delivery* is a separate step (email today), so swapping in
+an app/push channel later is just a new sender.
 
 ## Architecture
 
@@ -24,19 +28,21 @@ AutomationFunctions/
 ├── Program.cs                 # DI registration + host
 ├── host.json                  # Functions host config
 ├── local.settings.json        # your secrets/config (gitignored; copy from .example)
-├── Functions/                 # timer + HTTP triggers (thin; they compose services)
-│   ├── WeatherReportFunction.cs
-│   └── WebpageSummaryFunction.cs
+├── Functions/                 # thin triggers
+│   └── DailyDigestFunction.cs       # timer + HTTP; builds digest, then sends it
 ├── Services/                  # the reusable automation logic
+│   ├── DigestService.cs             # orchestrates the pipeline into one report
 │   ├── WebPageFetcher.cs            # download + strip HTML to text
 │   ├── OpenAiCompatibleLlmService.cs# local LLM via /chat/completions
-│   ├── SmtpEmailService.cs          # send mail over SMTP
+│   ├── ImapMailScanner.cs           # read recent mail over IMAP (MailKit)
+│   ├── SmtpEmailService.cs          # send mail over SMTP (MailKit)
 │   └── OpenMeteoWeatherService.cs   # current weather, no API key
 └── Options/                   # strongly-typed config sections
 ```
 
-**Adding a new job** = add a service (if needed) under `Services/`, register it in
-`Program.cs`, and add a `[TimerTrigger]` function under `Functions/` that calls it.
+**Adding a step** = add a service under `Services/`, register it in `Program.cs`, and
+call it from `DigestService.BuildAsync`. **Adding a separate job on its own schedule** =
+add another `[TimerTrigger]` function under `Functions/`.
 
 ## Prerequisites
 
@@ -73,9 +79,19 @@ AutomationFunctions/
      rejects you, Gmail is the reliable free option.
    - **Weather** — set `Weather__Latitude` / `Weather__Longitude` to your location.
    - **Summary** — set `Summary__Urls` to a comma-separated list of pages.
+   - **Inbox scan (optional)** — set `MailScan__Enabled` to `true` and fill in the
+     `MailScan__Accounts__0__*` (Gmail) and `__1__*` (Outlook) blocks. Use IMAP host
+     `imap.gmail.com` / `outlook.office365.com`, port `993`, and an **App Password**.
+     Gmail also needs IMAP enabled (Settings → Forwarding and POP/IMAP). Leave
+     `MailScan__Enabled=false` to skip the inbox section entirely.
+
+     \*Heads up: Microsoft is phasing out basic-auth IMAP on personal Outlook accounts in
+     favor of OAuth2 — if Outlook rejects the app password, Gmail is the reliable option,
+     and OAuth2 support can be added later.
 
    > Config note: nested keys use the double-underscore convention (`Email__SmtpHost`),
-   > which binds to `EmailOptions.SmtpHost`.
+   > which binds to `EmailOptions.SmtpHost`. List items are indexed
+   > (`MailScan__Accounts__0__ImapHost`).
 
 3. **Run it locally:**
 
@@ -88,11 +104,11 @@ AutomationFunctions/
 4. **Test a job immediately** (instead of waiting for the timer):
 
    ```bash
-   curl http://localhost:7071/api/run/weather
-   curl http://localhost:7071/api/run/summary
+   curl http://localhost:7071/api/run/digest
    ```
 
-   Locally the HTTP function key is not enforced, so these work as-is.
+   This runs the full pipeline immediately and returns the rendered digest (and emails
+   it). Locally the HTTP function key is not enforced, so it works as-is.
 
 ## Changing the schedules
 
@@ -113,8 +129,8 @@ Schedules run in **UTC** by default. To use local time, set `WEBSITE_TIME_ZONE`
 func azure functionapp publish <YourFunctionAppName>
 ```
 
-Then add every key from `local.settings.json` (LLM, Email, Weather, Summary) to the
-Function App's **Application settings**. Note: a cloud-hosted Function App cannot reach
+Then add every key from `local.settings.json` (LLM, Email, Weather, Summary, MailScan) to
+the Function App's **Application settings**. Note: a cloud-hosted Function App cannot reach
 a `localhost` LLM — for cloud runs, expose your model at a reachable URL (tunnel, VM,
 or hosted endpoint) and update `Llm__BaseUrl`. For a purely local LLM, run the Functions
 host on your own machine/VM instead.

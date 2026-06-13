@@ -31,6 +31,21 @@
     "Weather__WindSpeedUnit": "mph",
 
     "//3": "----- Pages to summarize (comma-separated) -----",
-    "Summary__Urls": "https://news.ycombinator.com, https://www.bbc.com/news"
+    "Summary__Urls": "https://news.ycombinator.com, https://www.bbc.com/news",
+
+    "//4": "----- Inbox scan over IMAP. Enabled=false skips it. Gmail: enable IMAP + use App Password. Outlook personal accounts may require an app password / OAuth2. -----",
+    "MailScan__Enabled": "false",
+    "MailScan__LookbackHours": "24",
+    "MailScan__MaxPerAccount": "15",
+    "MailScan__Accounts__0__Name": "Gmail",
+    "MailScan__Accounts__0__ImapHost": "imap.gmail.com",
+    "MailScan__Accounts__0__ImapPort": "993",
+    "MailScan__Accounts__0__Username": "youraddress@gmail.com",
+    "MailScan__Accounts__0__Password": "your-16-char-app-password",
+    "MailScan__Accounts__1__Name": "Outlook",
+    "MailScan__Accounts__1__ImapHost": "outlook.office365.com",
+    "MailScan__Accounts__1__ImapPort": "993",
+    "MailScan__Accounts__1__Username": "youraddress@outlook.com",
+    "MailScan__Accounts__1__Password": "your-app-password"
   }
 }

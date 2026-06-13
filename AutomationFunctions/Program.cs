@@ -16,14 +16,19 @@ var host = new HostBuilder()
         services.AddOptions<EmailOptions>().Bind(config.GetSection(EmailOptions.SectionName));
         services.AddOptions<WeatherOptions>().Bind(config.GetSection(WeatherOptions.SectionName));
         services.AddOptions<SummaryOptions>().Bind(config.GetSection(SummaryOptions.SectionName));
+        services.AddOptions<MailScanOptions>().Bind(config.GetSection(MailScanOptions.SectionName));
 
         services.AddHttpClient();
 
-        // Automation building blocks. Each timer/HTTP function composes these.
+        // Automation building blocks.
         services.AddSingleton<IWebPageFetcher, WebPageFetcher>();
         services.AddSingleton<ILlmService, OpenAiCompatibleLlmService>();
         services.AddSingleton<IEmailService, SmtpEmailService>();
         services.AddSingleton<IWeatherService, OpenMeteoWeatherService>();
+        services.AddSingleton<IMailScanner, ImapMailScanner>();
+
+        // Orchestrator that composes the building blocks into one report.
+        services.AddSingleton<IDigestService, DigestService>();
     })
     .Build();
 
