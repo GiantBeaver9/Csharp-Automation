@@ -3,8 +3,16 @@ using System.Text.RegularExpressions;
 
 namespace AutomationFunctions.Services;
 
-/// <summary>Human-readable fields decoded from a raw METAR.</summary>
-public record DecodedMetar(string? Wind, string? Visibility, string? Ceiling, string? Temperature, string? Altimeter)
+/// <summary>Human-readable fields decoded from a raw METAR, plus numeric wind for calculations.</summary>
+public record DecodedMetar(
+    string? Wind,
+    string? Visibility,
+    string? Ceiling,
+    string? Temperature,
+    string? Altimeter,
+    int? WindDirDeg = null,
+    int? WindSpeedKt = null,
+    int? WindGustKt = null)
 {
     public bool HasAny =>
         Wind is not null || Visibility is not null || Ceiling is not null
@@ -18,26 +26,34 @@ public record DecodedMetar(string? Wind, string? Visibility, string? Ceiling, st
 /// </summary>
 public static partial class MetarDecoder
 {
-    public static DecodedMetar Decode(string raw) => new(
-        Wind: DecodeWind(raw),
-        Visibility: DecodeVisibility(raw),
-        Ceiling: DecodeCeiling(raw),
-        Temperature: DecodeTemp(raw),
-        Altimeter: DecodeAltimeter(raw));
+    public static DecodedMetar Decode(string raw)
+    {
+        var (windText, dir, spd, gust) = ParseWind(raw);
+        return new DecodedMetar(
+            Wind: windText,
+            Visibility: DecodeVisibility(raw),
+            Ceiling: DecodeCeiling(raw),
+            Temperature: DecodeTemp(raw),
+            Altimeter: DecodeAltimeter(raw),
+            WindDirDeg: dir,
+            WindSpeedKt: spd,
+            WindGustKt: gust);
+    }
 
-    private static string? DecodeWind(string raw)
+    private static (string? Text, int? Dir, int? Spd, int? Gust) ParseWind(string raw)
     {
         var m = WindRegex().Match(raw);
-        if (!m.Success) return null;
+        if (!m.Success) return (null, null, null, null);
 
         var spd = Int(m.Groups["spd"].Value);
-        if (spd == 0) return "Calm";
+        var gust = m.Groups["gust"].Success ? Int(m.Groups["gust"].Value) : (int?)null;
+        if (spd == 0) return ("Calm", null, 0, null);
 
         var dirRaw = m.Groups["dir"].Value;
-        var dir = dirRaw == "VRB" ? "Variable" : $"{Int(dirRaw)}°";
-        var s = $"{dir} at {spd} kt";
-        if (m.Groups["gust"].Success) s += $", gusting {Int(m.Groups["gust"].Value)} kt";
-        return s;
+        int? dir = dirRaw == "VRB" ? null : Int(dirRaw);
+        var dirText = dir is null ? "Variable" : $"{dir}°";
+        var text = $"{dirText} at {spd} kt" + (gust is int g ? $", gusting {g} kt" : "");
+        return (text, dir, spd, gust);
     }
 
     private static string? DecodeVisibility(string raw)

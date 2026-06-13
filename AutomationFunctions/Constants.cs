@@ -85,6 +85,10 @@ public static class Constants
 
         /// <summary>Base of the keyless AWC data API; "/metar" and "/taf" are appended.</summary>
         public const string ApiBaseUrl = "https://aviationweather.gov/api/data";
+
+        // Crosswind highlighting: orange at/above caution, red at/above warning (knots).
+        public const int CrosswindCautionKt = 15;
+        public const int CrosswindWarningKt = 25;
     }
 
     /// <summary>IMAP inbox-scan defaults.</summary>

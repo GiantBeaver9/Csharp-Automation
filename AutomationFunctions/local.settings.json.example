@@ -39,6 +39,9 @@
     "//3b": "----- Aviation weather (METAR/TAF, keyless). ICAO codes; prefer User Secrets: dotnet user-secrets set \"Aviation:Airports\" \"KJFK,KBOS\". Empty = section skipped. -----",
     "Aviation__Airports": "",
     "Aviation__IncludeTaf": "true",
+    "//3c": "----- Optional: runways per airport -> crosswind. Heading derived from the number (04 = 040). Optional MagneticVariation (east +) corrects true METAR wind to magnetic. -----",
+    "Aviation__Runways__KJFK": "04,13,22,31",
+    "Aviation__MagneticVariation__KJFK": "-13",
 
     "//4": "----- Inbox scan over IMAP. Enabled=false skips it. Gmail: enable IMAP + use App Password. Outlook personal accounts may require an app password / OAuth2. -----",
     "MailScan__Enabled": "false",

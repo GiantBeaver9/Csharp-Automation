@@ -27,6 +27,7 @@ public class DigestService : IDigestService
     private readonly ILlmService _llm;
     private readonly IMailScanner _mailScanner;
     private readonly SummaryOptions _summaryOptions;
+    private readonly AviationOptions _aviationOptions;
     private readonly ILogger<DigestService> _logger;
 
     public DigestService(
@@ -36,6 +37,7 @@ public class DigestService : IDigestService
         ILlmService llm,
         IMailScanner mailScanner,
         IOptions<SummaryOptions> summaryOptions,
+        IOptions<AviationOptions> aviationOptions,
         ILogger<DigestService> logger)
     {
         _weather = weather;
@@ -44,6 +46,7 @@ public class DigestService : IDigestService
         _llm = llm;
         _mailScanner = mailScanner;
         _summaryOptions = summaryOptions.Value;
+        _aviationOptions = aviationOptions.Value;
         _logger = logger;
     }
 
@@ -124,7 +127,9 @@ public class DigestService : IDigestService
 
             if (!string.IsNullOrWhiteSpace(a.RawMetar))
             {
-                AppendDecodedMetar(body, MetarDecoder.Decode(a.RawMetar));
+                var decoded = MetarDecoder.Decode(a.RawMetar);
+                AppendDecodedMetar(body, decoded);
+                AppendCrosswind(body, a.Icao, decoded);
                 body.Append(
                     $"<p style=\"margin:2px 0\"><strong>METAR:</strong> <code>{WeatherHighlighter.Metar(a.RawMetar)}</code></p>");
             }
@@ -158,6 +163,47 @@ public class DigestService : IDigestService
         Add("Altimeter:", d.Altimeter);
 
         body.Append(HtmlFormat.Bullets(items));
+    }
+
+    private void AppendCrosswind(StringBuilder body, string icao, DecodedMetar d)
+    {
+        var runways = _aviationOptions.RunwaysFor(icao);
+        if (runways.Count == 0 || d.WindDirDeg is not int windDir || d.WindSpeedKt is not int windSpeed)
+        {
+            return; // no runways configured, or wind is calm/variable
+        }
+
+        var variation = _aviationOptions.VariationFor(icao);
+        var windForCalc = (int)Math.Round(windDir - variation); // true -> magnetic (east positive)
+        var components = Crosswind.Components(windForCalc, windSpeed, d.WindGustKt, runways);
+        if (components.Count == 0)
+        {
+            return;
+        }
+
+        var label = variation != 0 ? "Crosswind (magnetic-corrected)" : "Crosswind";
+        body.Append($"<p style=\"margin:4px 0 2px\"><strong>{label}:</strong></p>");
+        body.Append(HtmlFormat.Bullets(components.Select(RenderRunway)));
+    }
+
+    private static string RenderRunway(RunwayWind c)
+    {
+        // Crosswind colored by severity; tailwind always flagged red.
+        var xColor = c.Crosswind >= Constants.Aviation.CrosswindWarningKt ? Constants.Colors.Storm
+            : c.Crosswind >= Constants.Aviation.CrosswindCautionKt ? Constants.Colors.Caution
+            : null;
+        var xValue = $"{c.Crosswind} kt {c.CrosswindSide}";
+        var xHtml = xColor is null ? HtmlFormat.Enc(xValue) : HtmlFormat.ColorBold(xValue, xColor);
+        if (c.CrosswindGust is int g)
+        {
+            xHtml += " " + HtmlFormat.Enc($"(gust {g} kt)");
+        }
+
+        var windHtml = c.Headwind >= 0
+            ? HtmlFormat.Enc($"{c.Headwind} kt headwind")
+            : HtmlFormat.ColorBold($"{Math.Abs(c.Headwind)} kt tailwind", Constants.Colors.Storm);
+
+        return $"{HtmlFormat.Bold($"RWY {c.Runway} ({c.Heading:000}°):")} {xHtml} &middot; {windHtml}";
     }
 
     private async Task AppendWebsiteSummariesAsync(StringBuilder body, CancellationToken ct)
