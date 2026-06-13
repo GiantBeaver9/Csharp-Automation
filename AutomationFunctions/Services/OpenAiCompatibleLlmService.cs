@@ -37,9 +37,7 @@ public class OpenAiCompatibleLlmService : ILlmService
 
     public Task<string> SummarizeAsync(string text, string? instruction = null, CancellationToken ct = default)
     {
-        var system = instruction
-            ?? "You are a concise assistant. Summarize the content the user provides in a few clear "
-             + "bullet points, capturing the most important information. Avoid boilerplate and navigation text.";
+        var system = instruction ?? Constants.Llm.SummarySystemPrompt;
         return CompleteAsync(system, Truncate(text), ct);
     }
 
@@ -69,7 +67,7 @@ public class OpenAiCompatibleLlmService : ILlmService
 
         _logger.LogInformation("Calling local model {Model} at {BaseUrl}", _options.Model, _options.BaseUrl);
 
-        using var response = await client.PostAsJsonAsync("chat/completions", request, ct);
+        using var response = await client.PostAsJsonAsync(Constants.Llm.ChatCompletionsPath, request, ct);
         if (!response.IsSuccessStatusCode)
         {
             var error = await response.Content.ReadAsStringAsync(ct);

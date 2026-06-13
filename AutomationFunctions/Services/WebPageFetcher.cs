@@ -24,9 +24,8 @@ public partial class WebPageFetcher : IWebPageFetcher
     public async Task<string> FetchTextAsync(string url, CancellationToken ct = default)
     {
         var client = _httpClientFactory.CreateClient();
-        client.Timeout = TimeSpan.FromSeconds(30);
-        client.DefaultRequestHeaders.UserAgent.ParseAdd(
-            "Mozilla/5.0 (compatible; CsharpAutomationBot/1.0)");
+        client.Timeout = TimeSpan.FromSeconds(Constants.Http.RequestTimeoutSeconds);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(Constants.Http.UserAgent);
 
         _logger.LogInformation("Fetching {Url}", url);
         var html = await client.GetStringAsync(url, ct);

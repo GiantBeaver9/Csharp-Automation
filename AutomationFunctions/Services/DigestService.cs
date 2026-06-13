@@ -54,7 +54,7 @@ public class DigestService : IDigestService
 
         body.Append($"<p style=\"color:#888;font-size:12px\">Generated {DateTimeOffset.Now:f}</p>");
 
-        return new Digest($"Daily Digest — {DateTime.Now:MMM d}", body.ToString());
+        return new Digest($"{Constants.Digest.SubjectPrefix} — {DateTime.Now:MMM d}", body.ToString());
     }
 
     private async Task AppendWeatherAsync(StringBuilder body, CancellationToken ct)
@@ -130,10 +130,7 @@ public class DigestService : IDigestService
             {
                 try
                 {
-                    summary = await _llm.SummarizeAsync(
-                        mail.Body,
-                        "Summarize this email in 1-2 sentences. Be specific and call out any action the reader needs to take.",
-                        ct);
+                    summary = await _llm.SummarizeAsync(mail.Body, Constants.Llm.EmailSummaryPrompt, ct);
                 }
                 catch (Exception ex)
                 {

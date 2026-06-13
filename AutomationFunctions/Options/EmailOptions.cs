@@ -5,12 +5,12 @@ public class EmailOptions
 {
     public const string SectionName = "Email";
 
-    public string SmtpHost { get; set; } = "smtp.gmail.com";
+    public string SmtpHost { get; set; } = Constants.Email.SmtpHost;
 
-    public int SmtpPort { get; set; } = 587;
+    public int SmtpPort { get; set; } = Constants.Email.SmtpPort;
 
     /// <summary>Use STARTTLS (true, port 587) vs implicit SSL (false, port 465).</summary>
-    public bool UseStartTls { get; set; } = true;
+    public bool UseStartTls { get; set; } = Constants.Email.UseStartTls;
 
     public string Username { get; set; } = "";
 
@@ -19,7 +19,7 @@ public class EmailOptions
 
     public string FromAddress { get; set; } = "";
 
-    public string FromName { get; set; } = "Automation Bot";
+    public string FromName { get; set; } = Constants.Email.FromName;
 
     /// <summary>Where reports are sent (e.g. your own inbox).</summary>
     public string ToAddress { get; set; } = "";

@@ -26,6 +26,7 @@ an app/push channel later is just a new sender.
 ```
 AutomationFunctions/
 ├── Program.cs                 # DI registration + host
+├── Constants.cs              # default values, grouped by area (Llm, Email, Weather, ...)
 ├── host.json                  # Functions host config
 ├── local.settings.json        # your secrets/config (gitignored; copy from .example)
 ├── Functions/                 # thin triggers
@@ -100,10 +101,13 @@ overriding the one before:
 
 | Layer | Scope | Use for |
 | --- | --- | --- |
-| `Options` class defaults (in code) | fallback | non-secret defaults like ports, timeouts, units |
+| `Constants.cs` (in code) | fallback | non-secret defaults like ports, timeouts, units, prompts — grouped by area |
 | `local.settings.json` → env vars | local dev | everything; the `.example` lists every key |
 | **User Secrets** (`secrets.json`) | local dev | secrets, kept out of the project folder entirely |
 | **Application settings** | Azure | everything, including secrets, in the cloud |
+
+The `Options` classes seed their properties from `Constants.cs`, so every non-secret
+default lives in one place (e.g. `Constants.Email.SmtpPort`) and config still overrides it.
 
 **Keep secrets out of files with User Secrets.** Instead of putting your Gmail/IMAP
 passwords in `local.settings.json`, store them in the per-user secret store

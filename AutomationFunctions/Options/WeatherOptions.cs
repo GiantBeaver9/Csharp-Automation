@@ -5,15 +5,15 @@ public class WeatherOptions
 {
     public const string SectionName = "Weather";
 
-    public double Latitude { get; set; } = 40.7128;
+    public double Latitude { get; set; } = Constants.Weather.Latitude;
 
-    public double Longitude { get; set; } = -74.0060;
+    public double Longitude { get; set; } = Constants.Weather.Longitude;
 
-    public string LocationName { get; set; } = "New York";
+    public string LocationName { get; set; } = Constants.Weather.LocationName;
 
     /// <summary>"fahrenheit" or "celsius".</summary>
-    public string TemperatureUnit { get; set; } = "fahrenheit";
+    public string TemperatureUnit { get; set; } = Constants.Weather.TemperatureUnit;
 
     /// <summary>"mph", "kmh", "ms", or "kn".</summary>
-    public string WindSpeedUnit { get; set; } = "mph";
+    public string WindSpeedUnit { get; set; } = Constants.Weather.WindSpeedUnit;
 }

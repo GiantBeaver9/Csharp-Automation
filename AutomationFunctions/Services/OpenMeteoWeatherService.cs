@@ -48,14 +48,14 @@ public class OpenMeteoWeatherService : IWeatherService
         var lat = _options.Latitude.ToString(CultureInfo.InvariantCulture);
         var lon = _options.Longitude.ToString(CultureInfo.InvariantCulture);
         var url =
-            $"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}" +
-            "&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m" +
-            "&daily=temperature_2m_max,temperature_2m_min" +
+            $"{Constants.Weather.ApiBaseUrl}?latitude={lat}&longitude={lon}" +
+            $"&current={Constants.Weather.CurrentFields}" +
+            $"&daily={Constants.Weather.DailyFields}" +
             $"&temperature_unit={_options.TemperatureUnit}&wind_speed_unit={_options.WindSpeedUnit}" +
             "&timezone=auto&forecast_days=1";
 
         var client = _httpClientFactory.CreateClient();
-        client.Timeout = TimeSpan.FromSeconds(30);
+        client.Timeout = TimeSpan.FromSeconds(Constants.Http.RequestTimeoutSeconds);
 
         _logger.LogInformation("Fetching weather for {Location}", _options.LocationName);
         var data = await client.GetFromJsonAsync<OpenMeteoResponse>(url, ct)
