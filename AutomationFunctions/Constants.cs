@@ -70,11 +70,11 @@ public static class Constants
         public const string Highlight = "#fff3b0"; // yellow background — emphasis
         public const string Muted = "#666666";
 
-        // Flight categories
-        public const string Vfr = "#118811";
-        public const string Mvfr = "#1144cc";
-        public const string Ifr = "#cc1111";
-        public const string Lifr = "#cc11cc";
+        // Flight categories (traffic-light: green good → magenta worst)
+        public const string Vfr = "#118811";   // green
+        public const string Mvfr = "#c79100";  // amber/yellow — "marginal"
+        public const string Ifr = "#cc1111";   // red
+        public const string Lifr = "#cc11cc";  // magenta
     }
 
     /// <summary>Aviation weather (METAR/TAF) defaults — FAA/NOAA Aviation Weather Center.</summary>

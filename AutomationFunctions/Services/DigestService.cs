@@ -113,17 +113,18 @@ public class DigestService : IDigestService
         body.Append("<h2>Aviation Weather</h2>");
         foreach (var a in airports)
         {
+            // Colored status dot before each airport: green VFR, amber MVFR, red IFR, magenta LIFR.
+            var color = FlightCategory.Color(a.FlightCategory);
+            var dot = $"<span style=\"color:{color};font-size:16px\">&#9679;</span>";
             var heading = string.IsNullOrWhiteSpace(a.Name) ? a.Icao : $"{a.Icao} — {a.Name}";
-            body.Append($"<h3>{Enc(heading)}</h3>");
-
-            if (!string.IsNullOrWhiteSpace(a.FlightCategory))
-            {
-                body.Append(
-                    $"<p><strong style=\"color:{FlightCategory.Color(a.FlightCategory)}\">{Enc(a.FlightCategory)}</strong></p>");
-            }
+            var badge = string.IsNullOrWhiteSpace(a.FlightCategory)
+                ? string.Empty
+                : $" <strong style=\"color:{color}\">{Enc(a.FlightCategory)}</strong>";
+            body.Append($"<h3 style=\"margin-bottom:4px\">{dot} {Enc(heading)}{badge}</h3>");
 
             if (!string.IsNullOrWhiteSpace(a.RawMetar))
             {
+                AppendDecodedMetar(body, MetarDecoder.Decode(a.RawMetar));
                 body.Append(
                     $"<p style=\"margin:2px 0\"><strong>METAR:</strong> <code>{WeatherHighlighter.Metar(a.RawMetar)}</code></p>");
             }
@@ -138,6 +139,25 @@ public class DigestService : IDigestService
                     $"<p style=\"margin:2px 0\"><strong>TAF:</strong> <code>{WeatherHighlighter.Metar(a.RawTaf)}</code></p>");
             }
         }
+    }
+
+    private static void AppendDecodedMetar(StringBuilder body, DecodedMetar d)
+    {
+        if (!d.HasAny) return;
+
+        var items = new List<string>();
+        void Add(string label, string? value)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) items.Add($"{HtmlFormat.Bold(label)} {HtmlFormat.Enc(value)}");
+        }
+
+        Add("Wind:", d.Wind);
+        Add("Visibility:", d.Visibility);
+        Add("Ceiling:", d.Ceiling);
+        Add("Temp / Dew:", d.Temperature);
+        Add("Altimeter:", d.Altimeter);
+
+        body.Append(HtmlFormat.Bullets(items));
     }
 
     private async Task AppendWebsiteSummariesAsync(StringBuilder body, CancellationToken ct)
