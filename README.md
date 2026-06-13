@@ -158,8 +158,8 @@ only — that's all email clients reliably render). Highlighting is rule-based a
 - **Raw METAR/TAF** tokens are color-coded: freezing precip / icing and snow **blue**,
   thunderstorms / hail **red**, wind gusts **orange** (rules in
   `WeatherHighlighter` in `Services/HtmlFormat.cs`).
-- **Each airport** gets a colored status dot by flight category — green VFR, amber
-  "marginal" MVFR, red IFR, magenta LIFR — plus **decoded** wind / visibility / ceiling /
+- **Each airport** gets a colored status dot by flight category — green VFR, blue MVFR,
+  red IFR, magenta LIFR (standard aviation colors) — plus **decoded** wind / visibility / ceiling /
   temp-dewpoint / altimeter bullets (parsed from the raw METAR by `MetarDecoder`) above the
   raw strings.
 

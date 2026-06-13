@@ -113,7 +113,7 @@ public class DigestService : IDigestService
         body.Append("<h2>Aviation Weather</h2>");
         foreach (var a in airports)
         {
-            // Colored status dot before each airport: green VFR, amber MVFR, red IFR, magenta LIFR.
+            // Colored status dot before each airport: green VFR, blue MVFR, red IFR, magenta LIFR.
             var color = FlightCategory.Color(a.FlightCategory);
             var dot = $"<span style=\"color:{color};font-size:16px\">&#9679;</span>";
             var heading = string.IsNullOrWhiteSpace(a.Name) ? a.Icao : $"{a.Icao} — {a.Name}";

@@ -70,9 +70,9 @@ public static class Constants
         public const string Highlight = "#fff3b0"; // yellow background — emphasis
         public const string Muted = "#666666";
 
-        // Flight categories (traffic-light: green good → magenta worst)
+        // Flight categories (standard aviation convention)
         public const string Vfr = "#118811";   // green
-        public const string Mvfr = "#c79100";  // amber/yellow — "marginal"
+        public const string Mvfr = "#1144cc";  // blue
         public const string Ifr = "#cc1111";   // red
         public const string Lifr = "#cc11cc";  // magenta
     }
