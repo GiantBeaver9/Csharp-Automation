@@ -23,6 +23,7 @@ public class DigestService : IDigestService
 {
     private readonly IWeatherService _weather;
     private readonly IAviationWeatherService _aviation;
+    private readonly IRunwayService _runways;
     private readonly IWebPageFetcher _fetcher;
     private readonly ILlmService _llm;
     private readonly IMailScanner _mailScanner;
@@ -33,6 +34,7 @@ public class DigestService : IDigestService
     public DigestService(
         IWeatherService weather,
         IAviationWeatherService aviation,
+        IRunwayService runways,
         IWebPageFetcher fetcher,
         ILlmService llm,
         IMailScanner mailScanner,
@@ -42,6 +44,7 @@ public class DigestService : IDigestService
     {
         _weather = weather;
         _aviation = aviation;
+        _runways = runways;
         _fetcher = fetcher;
         _llm = llm;
         _mailScanner = mailScanner;
@@ -113,6 +116,18 @@ public class DigestService : IDigestService
             return; // none configured
         }
 
+        // Runway data (for crosswind) is looked up once for all airports and cached by the service.
+        IReadOnlyDictionary<string, AirportRunways> runwayInfo;
+        try
+        {
+            runwayInfo = await _runways.GetAsync(airports.Select(a => a.Icao), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Runway lookup failed");
+            runwayInfo = new Dictionary<string, AirportRunways>();
+        }
+
         body.Append("<h2>Aviation Weather</h2>");
         foreach (var a in airports)
         {
@@ -129,7 +144,7 @@ public class DigestService : IDigestService
             {
                 var decoded = MetarDecoder.Decode(a.RawMetar);
                 AppendDecodedMetar(body, decoded);
-                AppendCrosswind(body, a.Icao, decoded);
+                AppendCrosswind(body, a.Icao, decoded, runwayInfo);
                 body.Append(
                     $"<p style=\"margin:2px 0\"><strong>METAR:</strong> <code>{WeatherHighlighter.Metar(a.RawMetar)}</code></p>");
             }
@@ -165,15 +180,26 @@ public class DigestService : IDigestService
         body.Append(HtmlFormat.Bullets(items));
     }
 
-    private void AppendCrosswind(StringBuilder body, string icao, DecodedMetar d)
+    private void AppendCrosswind(
+        StringBuilder body, string icao, DecodedMetar d, IReadOnlyDictionary<string, AirportRunways> runwayInfo)
     {
-        var runways = _aviationOptions.RunwaysFor(icao);
-        if (runways.Count == 0 || d.WindDirDeg is not int windDir || d.WindSpeedKt is not int windSpeed)
+        if (d.WindDirDeg is not int windDir || d.WindSpeedKt is not int windSpeed)
         {
-            return; // no runways configured, or wind is calm/variable
+            return; // wind is calm or variable
         }
 
-        var variation = _aviationOptions.VariationFor(icao);
+        // Runways: API-provided, with the optional config list as an override.
+        runwayInfo.TryGetValue(icao, out var api);
+        var configRunways = _aviationOptions.RunwaysFor(icao);
+        var runways = configRunways.Count > 0 ? configRunways : api?.Runways ?? Array.Empty<string>();
+        if (runways.Count == 0)
+        {
+            return; // no runway data available
+        }
+
+        // Variation: config override, else the API's magnetic declination.
+        var configVar = _aviationOptions.VariationFor(icao);
+        var variation = configVar != 0 ? configVar : api?.MagneticVariation ?? 0;
         var windForCalc = (int)Math.Round(windDir - variation); // true -> magnetic (east positive)
         var components = Crosswind.Components(windForCalc, windSpeed, d.WindGustKt, runways);
         if (components.Count == 0)

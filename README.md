@@ -40,6 +40,7 @@ AutomationFunctions/
 │   ├── SmtpEmailService.cs          # send mail over SMTP (MailKit)
 │   ├── OpenMeteoWeatherService.cs   # current weather, no API key
 │   ├── AviationWeatherService.cs    # METAR/TAF by ICAO code, no API key
+│   ├── AwcRunwayService.cs          # runways + magnetic variation from AWC airport API (cached)
 │   ├── MetarDecoder.cs              # decode wind/visibility/ceiling from raw METAR
 │   ├── Crosswind.cs                 # per-runway crosswind/headwind components
 │   └── HtmlFormat.cs                # inline-CSS helpers + weather highlighting rules
@@ -86,9 +87,9 @@ add another `[TimerTrigger]` function under `Functions/`.
    - **Weather** — set `Weather__Latitude` / `Weather__Longitude` to your location.
    - **Aviation (optional)** — set `Aviation__Airports` to comma-separated ICAO codes
      (e.g. `KJFK,KBOS`); empty skips the section. `Aviation__IncludeTaf` controls whether
-     the forecast is fetched too. For crosswind, set runways per airport
-     (`Aviation__Runways__KJFK` = `04,13,22,31`) and optionally
-     `Aviation__MagneticVariation__KJFK`. Best set via User Secrets (below).
+     the forecast is fetched too. Crosswind is computed automatically (runways are fetched
+     from the API); only set `Aviation__Runways__KJFK` / `Aviation__MagneticVariation__KJFK`
+     to override. Best set via User Secrets (below).
    - **Summary** — set `Summary__Urls` to a comma-separated list of pages.
    - **Inbox scan (optional)** — set `MailScan__Enabled` to `true` and fill in the
      `MailScan__Accounts__0__*` (Gmail) and `__1__*` (Outlook) blocks. Use IMAP host
@@ -165,11 +166,13 @@ only — that's all email clients reliably render). Highlighting is rule-based a
   red IFR, magenta LIFR (standard aviation colors) — plus **decoded** wind / visibility / ceiling /
   temp-dewpoint / altimeter bullets (parsed from the raw METAR by `MetarDecoder`) above the
   raw strings.
-- **Crosswind** per runway when you configure runways for an airport: heading is derived
-  from the runway number (`04` → 040°), then `Crosswind` computes the crosswind (with gust)
-  and headwind/tailwind from the METAR wind. Crosswinds ≥15 kt are orange, ≥25 kt red, and
-  tailwinds are flagged red. METAR winds are *true* and runway numbers *magnetic*, so set an
-  optional `Aviation:MagneticVariation:<ICAO>` (east positive) to correct the alignment.
+- **Crosswind** per runway: runways and magnetic variation are **auto-fetched from the AWC
+  `airport` endpoint** (`AwcRunwayService`, cached in memory — no local runway database).
+  Heading comes from the runway number (`04` → 040°), then `Crosswind` computes the crosswind
+  (with gust) and headwind/tailwind from the METAR wind, correcting true→magnetic using the
+  airport's declination. Crosswinds ≥15 kt are orange, ≥25 kt red, tailwinds flagged red. You
+  can override per airport with `Aviation:Runways:<ICAO>` / `Aviation:MagneticVariation:<ICAO>`
+  if the API lacks an airport.
 
 Tweak the palette in one place (`Constants.Colors`), thresholds in `Constants.Weather`, and
 add new token rules in `WeatherHighlighter.ClassifyToken`. The `HtmlFormat` helper

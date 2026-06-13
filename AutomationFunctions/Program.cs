@@ -35,6 +35,7 @@ var host = new HostBuilder()
         services.AddSingleton<IEmailService, SmtpEmailService>();
         services.AddSingleton<IWeatherService, OpenMeteoWeatherService>();
         services.AddSingleton<IAviationWeatherService, AviationWeatherService>();
+        services.AddSingleton<IRunwayService, AwcRunwayService>();
         services.AddSingleton<IMailScanner, ImapMailScanner>();
 
         // Orchestrator that composes the building blocks into one report.
