@@ -20,7 +20,7 @@ Each job also has an HTTP twin so you can run it on demand without waiting for t
 ## Architecture
 
 ```
-src/AutomationFunctions/
+AutomationFunctions/
 ├── Program.cs                 # DI registration + host
 ├── host.json                  # Functions host config
 ├── local.settings.json        # your secrets/config (gitignored; copy from .example)
@@ -52,7 +52,7 @@ src/AutomationFunctions/
 1. **Create your settings file** (it's gitignored so secrets stay local):
 
    ```bash
-   cd src/AutomationFunctions
+   cd AutomationFunctions
    cp local.settings.json.example local.settings.json
    ```
 
@@ -81,7 +81,7 @@ src/AutomationFunctions/
 
    ```bash
    azurite &                 # start the storage emulator (separate terminal is fine)
-   cd src/AutomationFunctions
+   cd AutomationFunctions
    func start
    ```
 
