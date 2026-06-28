@@ -90,7 +90,9 @@ Each section's gather + summarize is wrapped so a failure degrades to a
     Abstractions/                  ← ISummaryOrchestrator, ISummarizer, IPageFetcher,
                                      IWeatherProvider, INewsProvider, IMiscUpdatesProvider,
                                      ITodoSource, IDeliveryChannel, ISummaryRenderer
+    Constants/                     ← Prompts.cs (all prompt text), SummarizationLimits.cs (chunk sizes)
     Models/                        ← AppConfig, DailySummary, NewsItem, TodoItem, WeatherReport, PageContent
+    Summarization/                 ← TextChunker.cs (sliding-window split), ChunkedSummarizer.cs (map-reduce)
     SummaryOrchestrator.cs
   DailySummary.Providers/          ← concrete implementations
     Weather/      OpenMeteoWeatherProvider.cs       (free, no API key)
@@ -167,10 +169,55 @@ https://api.open-meteo.com/v1/forecast
   (`PLAYWRIGHT_BROWSERS_PATH` set), so no download is needed locally. The Docker
   image installs the browser + OS deps at build time (see Dockerization).
 
+### Summarization — prompts + chunking (map-reduce)
+
+No floating strings: every prompt and every magic number lives in
+`DailySummary.Core/Constants/`.
+
+**`SummarizationLimits.cs`**
+```csharp
+public const int MaxChunkChars = 3000;   // most we send to the LLM at once
+public const int ChunkOverlapChars = 100; // chars each chunk shares with the previous
+```
+
+**`Prompts.cs`** (verbatim text, referenced by every summarizer — kept simple)
+```csharp
+public const string Weather =
+    "You are preparing a daily weather brief. Here is the data. " +
+    "Please brief for morning, afternoon, and evening.";
+
+public const string News =
+    "You are creating a summary for an end user on the daily headlines. " +
+    "Please take the information and provide a summary.";
+
+public const string Misc =
+    "You are summarizing miscellaneous site updates for an end user. " +
+    "Please provide a short summary of what changed.";
+
+public const string Todos =
+    "You are tidying a list of calendar items into a clean to-do list for the day.";
+
+public const string ReduceSuffix =     // appended for the final big pass
+    " The following are partial summaries; combine them into one final summary.";
+```
+
+**`TextChunker`** — splits a source string into windows of at most
+`MaxChunkChars`, where each window after the first repeats the last
+`ChunkOverlapChars` of the previous window (so context isn't lost at the seam).
+
+**`ChunkedSummarizer`** wraps any `ISummarizer` and runs the map-reduce loop:
+1. **Map** — for each chunk, call the LLM with the section prompt → a chunk summary.
+2. **Reduce** — if there was more than one chunk, concatenate the chunk summaries
+   and make **one final pass** (section prompt + `ReduceSuffix`) → the single big summary.
+   A single-chunk input skips the reduce step and returns the map result directly.
+
+Every section runs through `ChunkedSummarizer`, so the 3k-char limit and the
+final combined summary apply uniformly (weather, news, misc, todos).
+
 ## 7. Build steps (when we implement)
 
 1. **Solution scaffold** — `DailySummary.sln` with four projects + test project; .NET 8 isolated worker.
-2. **Core abstractions & models** — interfaces + DTOs; `SummaryOrchestrator` (runs each enabled section, isolates failures, aggregates a `DailySummary`).
+2. **Core abstractions & models** — interfaces + DTOs; `Constants/Prompts.cs` + `Constants/SummarizationLimits.cs`; `Summarization/TextChunker` + `ChunkedSummarizer` (map-reduce); `SummaryOrchestrator` (runs each enabled section, isolates failures, aggregates a `DailySummary`).
 3. **Config** — `AppConfig` model, `app.json` binding + validation, sample config.
 4. **Providers** — Open-Meteo weather; `PlaywrightPageFetcher` + Web news/misc providers (fetch→summarize); `ClaudeSummarizer` + `OllamaSummarizer` (factory keyed by config); `SqlTodoSource` + `GoogleCalendarTodoSource` stub; Markdown renderer + Markdown/console delivery.
 5. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI wiring selecting implementations from `app.json`.
