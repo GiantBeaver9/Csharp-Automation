@@ -10,71 +10,83 @@ Function packaged in a Docker container** — chosen over a plain Docker worker
 because the Azure Functions model is the more transferable, production-shaped
 experience for a real workplace, while still running locally for development.
 
-The summary is built from four configurable sections:
+The summary is built from a **config-driven list of sections** (`app.json`
+`sections[]`) — sections are data, not code. Each section declares a `type`, and
+the orchestrator dispatches by that type to a gatherer. Ship-day types:
 
-1. **Weather** for the day (location configured in `app.json`).
-2. **News** — fetch configured news sites and have an LLM summarize them.
-3. **Misc site updates** — fetch configured misc sites and have a (local) LLM summarize.
-4. **To-dos / calendar** — pull today's events/tasks (SQL or Google Calendar) into a to-do list.
+1. **Weather** — Open-Meteo for the day (location in the section's `settings`).
+2. **Web** — fetch configured sites (Playwright/Firefox) and have an LLM summarize
+   them. Used for news, misc updates, changelogs — any number of `web` sections.
+3. **Sql / GoogleCalendar** — pull today's events/tasks into a to-do list.
 
-Everything external (LLM, delivery, to-do source) sits behind a small interface
-selected via config, so the whole app runs locally with **zero cloud credentials**
-and each section can be upgraded to a real service independently.
+New section *instances* are pure JSON; new *types* (e.g. **Email**, RSS) are one
+small class each. Everything external (LLM, page fetch, gather source, delivery)
+sits behind an interface selected via config, so the whole app runs locally with
+**zero cloud credentials**.
 
 ## 2. Key decisions
 
 | Concern   | Decision | Rationale |
 |-----------|----------|-----------|
 | Hosting   | Timer-triggered (CRON) **Azure Function**, containerized via Docker | Production-shaped, transferable workplace experience; runs locally too. *(confirmed)* |
-| LLM       | Pluggable `ISummarizer` — **Claude** (Anthropic API) + **Ollama** (local), chosen in `app.json` | Matches "LLM summarize" for news and "local llm" for misc; both behind one seam |
-| Delivery  | Pluggable `IDeliveryChannel` — **Markdown file + console** first; Email/Slack later | Testable end-to-end with zero external accounts |
-| To-dos    | Pluggable `ITodoSource` — **local SQL** first, **Google Calendar** behind the same interface | Self-contained first; real calendar later without core changes |
+| Sections  | **Config-driven** `sections[]`; `SectionType` enum → `ISectionGatherer` registry | Add instances by JSON, add types by one class — no orchestrator changes |
+| Concurrency | **Fan-out fetch → single LLM lane** via bounded `Channel`; two-stage (per-source + section fold) | Hide fetch latency; never overwhelm a local model; flat memory at scale |
+| Page fetch | **Playwright Firefox, headed** (under Xvfb in Docker) | Evades bot detection far better than headless Chromium |
+| LLM       | Pluggable `ISummarizer` — **Claude** + **Ollama**, chosen per section in `app.json` | "LLM summarize" for news, "local llm" for misc; both behind one seam |
+| Delivery  | Pluggable `IDeliveryChannel` — **Markdown / console / email** ship; Slack later | Markdown/console testable with zero accounts; email = the rendered triple |
+| Timeouts  | **Per-item `timeoutSeconds`**, skip-on-fail | Long batch run; a few dead items never abort or stall it |
 | Weather   | **Open-Meteo** (free, no API key) | Happy path needs no secrets |
 
-> The LLM / delivery / to-do defaults are recommendations. All three are
-> pluggable, so changing a default later is a one-line config swap.
+> Defaults (Claude vs Ollama, markdown delivery) are config — changing one is a
+> JSON edit, not a code change.
 
 ## 3. Architecture
 
 ```
 Azure Functions Host (Docker)
-  └─ DailySummaryFunction        ← [TimerTrigger("0 0 6 * * *")]  (06:00 daily)
+  └─ DailySummaryFunction        ← [TimerTrigger(schedule from app.json)]  (06:00 daily)
         └─ ISummaryOrchestrator.RunAsync()
-              ├─ IWeatherProvider        → Open-Meteo HTTP API → weather section
-              ├─ INewsProvider           → IPageFetcher (Playwright) ─┐
-              ├─ IMiscUpdatesProvider    → IPageFetcher (Playwright) ─┤→ ISummarizer (Claude | Ollama)
-              ├─ ITodoSource (SQL|GCal)  → to-do list                 ┘
-              └─ ISummaryRenderer        → builds the "newspaper" document
-                    └─ IDeliveryChannel  (Markdown/console | Email | Slack)
+              foreach section in app.json `sections[]`  (data, not code):
+                 SectionGathererRegistry[section.Type]  → ISectionGatherer
+              │
+              │  GatherSummarizePipeline (bounded Channel):
+              │   ┌ producers (concurrency.fetch) ┐        ┌ consumer(s) (concurrency.summarize) ┐
+              │   │ WeatherGatherer  → RawPiece    │        │  ChunkedSummarizer per piece         │
+        RawPiece │ WebGatherer(Firefox) → RawPiece │──Ch──▶ │  → partial summaries by section      │
+              │   │ SqlGatherer      → RawPiece    │        │  → section FOLD (Final delegate)     │
+              │   └ EmailGatherer(future)→RawPiece ┘        └──────────────────────────────────────┘
+              │
+              └─ SummaryRenderer (FormatSection delegate) → RenderedSummary triple
+                    └─ IDeliveryChannel  (markdown/console | email | …)
 ```
 
-The news and misc providers do **not** fetch HTML with `HttpClient` — they take an
-`IPageFetcher` (Playwright / headless Chromium) so JS-rendered home pages are
-captured as real rendered text, then pass that text to the `ISummarizer`.
+Web gatherers do **not** fetch HTML with `HttpClient` — they use `IPageFetcher`
+(Playwright / **Firefox, headed**) so JS-rendered pages are captured as real text.
 
-Core principle: the **orchestrator depends only on interfaces**; concrete
-implementations are registered in DI and selected by `app.json`. Each section is
-independently toggleable and **failure-isolated** — a dead news site must not sink
-the weather section.
+Core principle: the **orchestrator depends only on interfaces and iterates over
+config**. It has no per-section code — `SectionType` selects an `ISectionGatherer`
+from a registry. Every section is independently toggleable (remove it from JSON)
+and **failure-isolated** (per-item timeout → "section unavailable" note, run continues).
 
 ### Orchestration flow (`SummaryOrchestrator.RunAsync`)
 
-Three explicit phases, run in order:
+Driven by `app.json` `sections[]`; phases overlap via a bounded channel (§6).
 
-1. **Gather** — collect all raw inputs for every enabled section:
-   weather (Open-Meteo), news + misc page text (Playwright `IPageFetcher`),
-   and to-dos (SQL / Google Calendar). Raw, un-summarized.
-2. **Summarize** — cycle each gathered part through the `ISummarizer` one at a
-   time (weather phrased into a blurb, each news/misc page condensed, to-dos
-   tidied into a list). The summarizer used per section is the one named in that
-   section's config.
-3. **Render & deliver** — `ISummaryRenderer` assembles the summarized parts into
-   one "newspaper" document, then `IDeliveryChannel` either **returns** it
-   (console / function output) or **writes the Markdown file** to the path from
-   `app.json` (`delivery.outputDir`, dated filename).
+1. **Gather (concurrent producers)** — for each configured section, the registry
+   resolves an `ISectionGatherer` by `SectionType`; gatherers run in parallel
+   (bounded by `concurrency.fetch`) and write `RawPiece`s into the channel **as
+   they finish**. A section with many sources (e.g. 500 URLs) emits one `RawPiece`
+   per source.
+2. **Summarize (serial consumer)** — one LLM lane (`concurrency.summarize`, default
+   1 to protect local models) drains the channel as pieces arrive, summarizing each
+   via `ChunkedSummarizer`. After the channel drains, each section's per-source
+   summaries are **folded** (the section's `Final` delegate) into one section entry.
+3. **Render & deliver** — `SummaryRenderer` assembles the folded sections (in
+   `order`) into the document; `IDeliveryChannel` returns it (console) or writes
+   the Markdown file (`delivery.outputDir`) or emails the triple.
 
-Each section's gather + summarize is wrapped so a failure degrades to a
-"section unavailable" note rather than aborting the whole run.
+Per-item failures/timeouts degrade to a "this call was unable to complete" note
+rather than aborting the run.
 
 > **Summarization boundary.** The LLM only ever summarizes **individual pieces**
 > (a weather blurb, a news summary, a misc summary, a todo list). The **final
@@ -95,24 +107,25 @@ Each section's gather + summarize is wrapped so a failure degrades to a
     app.json                       ← user-facing config (location, sites, providers)
   DailySummary.Core/               ← orchestration + interfaces (no Azure dependency)
     Abstractions/                  ← ISummaryOrchestrator, ISummarizer, IPageFetcher,
-                                     IWeatherProvider, INewsProvider, IMiscUpdatesProvider,
-                                     ITodoSource, IDeliveryChannel, ISummaryRenderer
-    Constants/                     ← Prompts.cs (all prompt text), SummarizationLimits.cs (chunk sizes)
-    Models/                        ← AppConfig, DailySummary, SummarySection, RenderedSummary,
-                                     NewsItem, TodoItem, WeatherReport, PageContent
+                                     ISectionGatherer, IDeliveryChannel, ISummaryRenderer
+    Constants/                     ← Prompts.cs (default prompt per type), SummarizationLimits.cs
+    Models/                        ← AppConfig, SectionConfig, SectionType (enum),
+                                     DailySummary, SummarySection, RenderedSummary,
+                                     RawPiece, GatherResult, TodoItem, WeatherReport, PageContent
+    Pipeline/                      ← GatherSummarizePipeline.cs (bounded Channel producer→consumer),
+                                     SectionGathererRegistry.cs (SectionType → ISectionGatherer)
     Summarization/                 ← SummarizeFunc.cs (delegate), TextChunker.cs (sliding-window split),
                                      ChunkedSummarizer.cs (map-reduce over delegates),
-                                     SectionSummarizers.cs (named delegates per section)
+                                     SectionSummarizers.cs (delegate per section, from prompt+ISummarizer)
     Rendering/                     ← FormatSection.cs (delegate), SectionFormats.cs (Markdown/Html),
                                      SummaryRenderer.cs (structured model → formatted string)
     SummaryOrchestrator.cs
   DailySummary.Providers/          ← concrete implementations
-    Weather/      OpenMeteoWeatherProvider.cs       (free, no API key)
-    Fetching/     PlaywrightPageFetcher.cs          (headless Chromium, JS-rendered text)
-    News/         WebNewsProvider.cs                (IPageFetcher → ISummarizer)
-    Misc/         WebMiscUpdatesProvider.cs         (IPageFetcher → ISummarizer)
+    Gatherers/    WeatherGatherer.cs (Open-Meteo), WebGatherer.cs (IPageFetcher),
+                  SqlGatherer.cs, GoogleCalendarGatherer.cs, (future) EmailGatherer.cs
+                  — each declares its SectionType + binds its own `settings` JSON
+    Fetching/     PlaywrightPageFetcher.cs          (Firefox, headed, JS-rendered text)
     Summarizers/  ClaudeSummarizer.cs, OllamaSummarizer.cs
-    Todos/        SqlTodoSource.cs, GoogleCalendarTodoSource.cs
     Delivery/     MarkdownFileDelivery.cs, ConsoleDelivery.cs, EmailDelivery.cs
 /tests
   DailySummary.Tests/              ← xUnit; orchestrator test with fakes for every interface
@@ -125,12 +138,9 @@ README.md
 ```jsonc
 {
   "schedule": "0 0 6 * * *",
-  "weather":  { "enabled": true,  "latitude": 40.71, "longitude": -74.01, "units": "imperial" },
-  "news":     { "enabled": true,  "summarizer": "claude",
-                "sites": ["https://news.ycombinator.com", "https://www.reuters.com"] },
-  "misc":     { "enabled": true,  "summarizer": "ollama",
-                "sites": ["https://example.com/changelog"] },
-  "todos":    { "enabled": true,  "source": "sql" },          // "sql" | "google"
+  "concurrency": { "fetch": 7, "summarize": 1 },   // fetch lanes; LLM lanes (keep 1 for local models)
+  "channelCapacity": 16,                            // bounded backpressure (~ fetch count)
+  "browser": { "engine": "firefox", "headed": true }, // Firefox headed evades bot detection better than headless
   "summarizers": {
     "claude": { "model": "claude-haiku-4-5", "apiKeyEnv": "ANTHROPIC_API_KEY" },
     "ollama": { "endpoint": "http://ollama:11434", "model": "llama3.1" }
@@ -139,13 +149,37 @@ README.md
     "channel": "markdown",            // "markdown" | "console" | "email"
     "outputDir": "./out",             // markdown channel: writes {outputDir}/{yyyy-MM-dd}.md
     "email": {                        // used only when channel == "email"
-      "to": "adamnash19@gmail.com",
-      "from": "brief@example.com",
-      "smtpHost": "smtp.example.com",
-      "smtpPort": 587,
+      "to": "adamnash19@gmail.com", "from": "brief@example.com",
+      "smtpHost": "smtp.example.com", "smtpPort": 587,
       "passwordEnv": "SMTP_PASSWORD"  // secret via env var, never in app.json
     }
-  }
+  },
+
+  // Sections are data, not code. Add/remove/reorder by editing this array.
+  // `type` selects the gatherer (SectionType enum → ISectionGatherer registry).
+  // `settings` is a type-specific blob parsed by that gatherer ("parse by json specs").
+  // `prompt` is optional — omitted = default from Constants/Prompts.cs for that type.
+  "sections": [
+    { "type": "weather", "heading": "Weather", "order": 0, "summarizer": "ollama",
+      "timeoutSeconds": 30,
+      "settings": { "latitude": 40.71, "longitude": -74.01, "units": "imperial" } },
+
+    { "type": "web", "heading": "Headlines", "order": 1, "summarizer": "claude",
+      "timeoutSeconds": 60,
+      "settings": { "urls": ["https://news.ycombinator.com", "https://www.reuters.com"] } },
+
+    { "type": "web", "heading": "Site Updates", "order": 2, "summarizer": "ollama",
+      "timeoutSeconds": 60,
+      "settings": { "urls": ["https://example.com/changelog"] } },
+
+    { "type": "sql", "heading": "To-Dos", "order": 3, "summarizer": "ollama",
+      "timeoutSeconds": 30,
+      "settings": { "connectionStringEnv": "TODO_DB", "query": "SELECT title, due FROM tasks WHERE due::date = CURRENT_DATE" } }
+
+    // future, once EmailGatherer + the SectionType.Email case exist — pure JSON to add then:
+    // { "type": "email", "heading": "Inbox", "order": 4, "summarizer": "claude",
+    //   "timeoutSeconds": 90, "settings": { "imapHost": "...", "mailbox": "INBOX", "passwordEnv": "MAIL_PW" } }
+  ]
 }
 ```
 
@@ -156,7 +190,7 @@ keys) come from **environment variables**, never committed in `app.json`.
 
 ### Weather — Open-Meteo (free, no API key)
 
-`OpenMeteoWeatherProvider` issues one GET to:
+`WeatherGatherer` (type `weather`) issues one GET to:
 
 ```
 https://api.open-meteo.com/v1/forecast
@@ -166,29 +200,102 @@ https://api.open-meteo.com/v1/forecast
   &timezone=auto&temperature_unit={fahrenheit|celsius}
 ```
 
-- `lat`/`lon`/`units` come from `app.json` → `weather` block.
+- `lat`/`lon`/`units` come from the `weather` section's `settings` blob.
 - The integer `weather_code` (WMO codes) is mapped to human text via a static
   lookup (`0 → "Clear sky"`, `61 → "Light rain"`, …) in a `WmoWeatherCodes` helper.
-- Result projected into a `WeatherReport { Current, High, Low, PrecipChance, Condition }`.
+- Result projected into a `WeatherReport { Current, High, Low, PrecipChance, Condition }`,
+  then flattened into the `RawPiece` text the summarizer receives.
 - No key, no auth, no sidecar — the happy path stays credential-free.
 
-### Page capture — Playwright (headless Chromium)
+### Section model & extensibility — config-driven, enum-dispatched
 
-`PlaywrightPageFetcher : IPageFetcher` is the **only** way news/misc pages are read.
+Sections are **data, not code**. Each `sections[]` entry binds to a `SectionConfig`:
 
-- On the first call per run it launches **one** Chromium instance
-  (`Playwright.CreateAsync()` → `Chromium.LaunchAsync(headless: true)`); each site
-  gets a fresh `IPage` (or browser context) so cookies/state don't leak between sites.
-- Per site: `page.GotoAsync(url, WaitUntil = NetworkIdle)` with a timeout, then
-  `page.InnerTextAsync("body")` to grab the fully rendered visible text.
-- Returns `PageContent { Url, Title, Text, FetchedAt }`; the text is what the
-  `ISummarizer` receives. Truncated to a max char budget before summarizing.
-- The fetcher is `IAsyncDisposable` — the browser is disposed at the end of the run.
-- Failures per site (timeout, nav error) are caught and logged; that site is
-  skipped, the rest of the newspaper still renders.
-- **Browser binary:** this environment ships Chromium at `/opt/pw-browsers`
-  (`PLAYWRIGHT_BROWSERS_PATH` set), so no download is needed locally. The Docker
-  image installs the browser + OS deps at build time (see Dockerization).
+```csharp
+public enum SectionType { Weather, Web, Sql, GoogleCalendar, Email /* add a case per new type */ }
+
+public record SectionConfig(
+    SectionType Type, string Heading, int Order, string Summarizer,
+    int TimeoutSeconds, string? Prompt, JsonElement Settings);   // Settings = type-specific blob
+```
+
+Every source type implements one interface:
+
+```csharp
+public interface ISectionGatherer
+{
+    SectionType Type { get; }                                    // self-declares its enum
+    Task<IReadOnlyList<RawPiece>> GatherAsync(SectionConfig cfg, CancellationToken ct);
+}
+// RawPiece { int SectionOrder; string Heading; string Text; }  — one per source (URL, row, email…)
+```
+
+`GatherAsync` deserializes its own slice: `cfg.Settings.Deserialize<WebSettings>()` etc.
+("parse by json specs"). DI registers all gatherers; `SectionGathererRegistry` is a
+`Dictionary<SectionType, ISectionGatherer>` built from them — **dispatch is a registry
+lookup keyed by the enum, not a hand-edited switch**.
+
+- **Add an instance** of an existing type (another site list, another SQL query, a
+  third weather location) → **pure JSON**, zero code.
+- **Add a new type** (Email, RSS, Reddit) → implement one `ISectionGatherer`, add the
+  enum case, register it once in `Program.cs`. That single new class is the *only*
+  place that type's code exists — minimal surface, minimal liability.
+- **Prompt**: `cfg.Prompt ?? Prompts.Default(cfg.Type)` — code carries no floating
+  strings; JSON may override per section.
+
+### Page capture — Playwright (Firefox, headed)
+
+`PlaywrightPageFetcher : IPageFetcher` is the **only** way web pages are read, used
+by `WebGatherer`. **Firefox headed**, not Chromium headless — it evades bot
+detection markedly better.
+
+- Launches **one** Firefox per run (`Firefox.LaunchAsync(new() { Headless = false })`);
+  each fetch gets a fresh `IBrowserContext` (cheap isolation, no cookie/state bleed)
+  — this is how `concurrency.fetch` parallel "browsers" run without N processes.
+- Per page: `page.GotoAsync(url, WaitUntil = NetworkIdle)` under the section's
+  `timeoutSeconds`, then `page.InnerTextAsync("body")` for rendered visible text.
+- The fetcher is `IAsyncDisposable`; the browser is disposed at end of run.
+- **Headed needs a display.** Locally it opens real windows. In Docker it runs under
+  **Xvfb** (virtual framebuffer); the image installs Firefox + OS deps via
+  `playwright install --with-deps firefox` and `xvfb` (see Dockerization).
+
+### Concurrency pipeline — bounded Channel, fan-out fetch → single LLM lane
+
+`GatherSummarizePipeline` is a producer→consumer over `System.Threading.Channels`:
+
+```csharp
+var channel = Channel.CreateBounded<RawPiece>(cfg.ChannelCapacity);   // backpressure
+// PRODUCERS — concurrency.fetch lanes; write RawPieces as they finish, fail-soft
+await Parallel.ForEachAsync(allGathers, new(){MaxDegreeOfParallelism = cfg.Fetch}, async (g, ct) => {
+    try   { foreach (var p in await WithTimeout(g, ct)) await channel.Writer.WriteAsync(p, ct); }
+    catch { await channel.Writer.WriteAsync(Unavailable(g), ct); }     // "could not complete" marker
+});
+channel.Writer.Complete();
+// CONSUMER(S) — concurrency.summarize lanes (default 1); drain as items arrive
+await foreach (var piece in channel.Reader.ReadAllAsync(ct))
+    partials[piece.SectionOrder].Add(await chunked.SummarizeAsync(piece.Text, fn.Chunk, fn.Final, ct));
+```
+
+- **Overlap:** the LLM starts on the first arrival while later fetches are still
+  running — fetch latency hides behind LLM work.
+- **Two-stage summarization for scale:** per-source summaries accumulate per
+  `SectionOrder`; after the drain, each section's list is **folded** via its `Final`
+  delegate into one section entry. So "Headlines" with 500 URLs → 500 page summaries
+  → one folded section — the newspaper never balloons to 500 blurbs.
+- **500-page behavior:** memory stays **flat** (bounded channel blocks producers when
+  the LLM lane lags); 500 URLs queue through `fetch` lanes (not 500 browsers); the
+  single LLM lane is the throughput ceiling (fine for a 6am batch; raise
+  `concurrency.summarize` for cloud). `summarize > 1` = that many consumer loops on
+  the same reader — channels hand each piece to exactly one reader.
+- **Ordering:** pieces finish out of order but carry `SectionOrder`; render reads
+  sections in `order`, so layout is deterministic.
+
+### Per-item timeouts — configurable, skip-on-fail
+
+No short global deadline (the run isn't interactive). Each gather and each LLM call
+runs under a linked `CancellationTokenSource` seeded from the section's
+`timeoutSeconds`. On timeout or null response, that item is dropped and the renderer
+inserts *"this call was unable to complete"* — the rest of the run proceeds.
 
 ### Summarization — prompts + chunking (map-reduce)
 
@@ -331,24 +438,27 @@ to use.
 
 ## 7. Build steps (when we implement)
 
-1. **Solution scaffold** — `DailySummary.sln` with four projects + test project; .NET 8 isolated worker.
-2. **Core abstractions & models** — interfaces + DTOs; `Constants/Prompts.cs` + `Constants/SummarizationLimits.cs`; `Summarization/` `SummarizeFunc` delegate + `TextChunker` + `ChunkedSummarizer` (map-reduce over delegates) + `SectionSummarizers` (named per-section delegates); `SummaryOrchestrator` (runs each enabled section, isolates failures, aggregates a `DailySummary`).
-3. **Config** — `AppConfig` model, `app.json` binding + validation, sample config.
-4. **Providers** — Open-Meteo weather; `PlaywrightPageFetcher` + Web news/misc providers (fetch→summarize); `ClaudeSummarizer` + `OllamaSummarizer` (factory keyed by config); `SqlTodoSource` + `GoogleCalendarTodoSource` stub; `SummaryRenderer` (Markdown + HTML via format delegate, produces the `RenderedSummary` triple); Markdown/console/email delivery channels.
-5. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI wiring selecting implementations from `app.json`.
-6. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Playwright Chromium + OS deps** (`playwright install --with-deps chromium` during build); `docker-compose.yml` (function + optional `ollama` sidecar).
-7. **Tests** — xUnit orchestrator test with in-memory fakes for every interface (wiring + failure isolation, no network); renderer/config-binding unit tests.
-8. **README** — configure `app.json`, run locally (`func start` / `docker compose up`), deploy to Azure.
+1. **Solution scaffold** — `DailySummary.sln` (Functions + Core + Providers + test); .NET 8 isolated worker.
+2. **Core abstractions & models** — `ISectionGatherer`, `ISummarizer`, `IPageFetcher`, `IDeliveryChannel`, `ISummaryRenderer`; `SectionType` enum, `SectionConfig`, `RawPiece`, `DailySummary`/`SummarySection`/`RenderedSummary`; `Constants/Prompts.cs` (default per type) + `SummarizationLimits.cs`; `Summarization/` (`SummarizeFunc` + `TextChunker` + `ChunkedSummarizer` + `SectionSummarizers`).
+3. **Config** — `AppConfig` (`sections[]`, `concurrency`, `channelCapacity`, `browser`, `delivery`), `app.json` binding + validation; per-type `Settings` bound via `JsonElement`.
+4. **Pipeline + registry** — `SectionGathererRegistry` (enum→gatherer); `GatherSummarizePipeline` (bounded Channel: concurrent producers → serial consumer + section fold); `SummaryOrchestrator` iterating `sections[]`.
+5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `SqlGatherer`; `GoogleCalendarGatherer` stub; `ClaudeSummarizer` + `OllamaSummarizer`; `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
+6. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI registering every `ISectionGatherer` (→ registry) + selecting summarizer/delivery from `app.json`.
+7. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Firefox + Xvfb + OS deps** (`playwright install --with-deps firefox`, `xvfb`); run the host under `xvfb-run`; `docker-compose.yml` (function + optional `ollama` sidecar).
+8. **Tests** — xUnit: pipeline test (concurrent gather + serial summarize + section fold + ordering) with a fake gatherer/summarizer; failure/timeout → "unavailable"; renderer Markdown/HTML/triple asserts; config + `Settings` binding.
+9. **README** — `app.json` sections model, run locally (`func start` / `docker compose up`), deploy to Azure.
 
 ## 8. Verification
 
-- **Unit/integration:** `dotnet test` — orchestrator produces a complete `DailySummary` from fakes; one failing section doesn't abort the run. `IPageFetcher` is faked here (no real browser in unit tests). Renderer test asserts Markdown (`##` headers) and HTML (`<h2>` tags) outputs of the same `DailySummary` and that the email triple carries subject/html/text.
-- **Local run (no cloud):** `delivery.channel = "console"`, weather enabled (Open-Meteo, no key), summarizer = `ollama` (or a `fake` summarizer for offline). Real Playwright fetch hits the configured sites. Manually trigger via the Functions admin endpoint (`POST http://localhost:7071/admin/functions/DailySummaryFunction`) and confirm a rendered newspaper in console / `./out/*.md`.
-- **Docker:** `docker compose up`, same manual trigger, confirm output inside the container.
-- **Claude path (optional):** set `ANTHROPIC_API_KEY`, switch news summarizer to `claude`, re-trigger, confirm a real summary.
+- **Unit/integration:** `dotnet test` — `GatherSummarizePipeline` with a fake gatherer (emits N pieces, some that throw/time out) + fake summarizer: assert concurrent gather, serial summarize (consumer never overlaps), section fold, deterministic order, and that failures/timeouts render "unavailable". Renderer test asserts Markdown (`##`) + HTML (`<h2>`) of the same `DailySummary` and the email triple (subject/html/text). Config test binds a `sections[]` `app.json` incl. per-type `Settings`.
+- **Local run (no cloud):** `delivery.channel = "console"`, a `weather` section (Open-Meteo, no key) + a `web` section, summarizer = `ollama` (or a `fake` for offline). Real Firefox (headed) fetch hits the sites. Trigger via the admin endpoint (`POST http://localhost:7071/admin/functions/DailySummaryFunction`) and confirm a rendered newspaper in console / `./out/*.md`.
+- **Docker:** `docker compose up` (Firefox runs under Xvfb), same trigger, confirm output inside the container.
+- **Scale check:** a `web` section with a large `urls` list — confirm flat memory (bounded channel), serial LLM lane, and one folded section in the output.
+- **Claude path (optional):** set `ANTHROPIC_API_KEY`, switch a section's summarizer to `claude`, re-trigger, confirm a real summary.
 
 ## 9. Out of scope (future)
 
+- New section *types* beyond Weather/Web/Sql/GoogleCalendar — e.g. **Email**, RSS, Reddit. The model supports them; each is one `ISectionGatherer` + enum case + registration when wanted.
 - Slack / Teams / Discord delivery channels (interface ready; email + markdown + console ship initially).
 - Real Google Calendar OAuth flow (stub only initially).
 - Azure deployment automation (IaC / Bicep) — README instructions only.
