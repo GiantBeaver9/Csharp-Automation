@@ -98,10 +98,13 @@ Each section's gather + summarize is wrapped so a failure degrades to a
                                      IWeatherProvider, INewsProvider, IMiscUpdatesProvider,
                                      ITodoSource, IDeliveryChannel, ISummaryRenderer
     Constants/                     ← Prompts.cs (all prompt text), SummarizationLimits.cs (chunk sizes)
-    Models/                        ← AppConfig, DailySummary, NewsItem, TodoItem, WeatherReport, PageContent
+    Models/                        ← AppConfig, DailySummary, SummarySection, RenderedSummary,
+                                     NewsItem, TodoItem, WeatherReport, PageContent
     Summarization/                 ← SummarizeFunc.cs (delegate), TextChunker.cs (sliding-window split),
                                      ChunkedSummarizer.cs (map-reduce over delegates),
                                      SectionSummarizers.cs (named delegates per section)
+    Rendering/                     ← FormatSection.cs (delegate), SectionFormats.cs (Markdown/Html),
+                                     SummaryRenderer.cs (structured model → formatted string)
     SummaryOrchestrator.cs
   DailySummary.Providers/          ← concrete implementations
     Weather/      OpenMeteoWeatherProvider.cs       (free, no API key)
@@ -110,8 +113,7 @@ Each section's gather + summarize is wrapped so a failure degrades to a
     Misc/         WebMiscUpdatesProvider.cs         (IPageFetcher → ISummarizer)
     Summarizers/  ClaudeSummarizer.cs, OllamaSummarizer.cs
     Todos/        SqlTodoSource.cs, GoogleCalendarTodoSource.cs
-    Delivery/     MarkdownFileDelivery.cs, ConsoleDelivery.cs
-    Rendering/    MarkdownSummaryRenderer.cs
+    Delivery/     MarkdownFileDelivery.cs, ConsoleDelivery.cs, EmailDelivery.cs
 /tests
   DailySummary.Tests/              ← xUnit; orchestrator test with fakes for every interface
 docker-compose.yml                 ← Functions container (+ optional ollama sidecar)
@@ -133,7 +135,17 @@ README.md
     "claude": { "model": "claude-haiku-4-5", "apiKeyEnv": "ANTHROPIC_API_KEY" },
     "ollama": { "endpoint": "http://ollama:11434", "model": "llama3.1" }
   },
-  "delivery": { "channel": "markdown", "outputDir": "./out" }  // "markdown" | "console" | (later) "email"/"slack"
+  "delivery": {
+    "channel": "markdown",            // "markdown" | "console" | "email"
+    "outputDir": "./out",             // markdown channel: writes {outputDir}/{yyyy-MM-dd}.md
+    "email": {                        // used only when channel == "email"
+      "to": "adamnash19@gmail.com",
+      "from": "brief@example.com",
+      "smtpHost": "smtp.example.com",
+      "smtpPort": 587,
+      "passwordEnv": "SMTP_PASSWORD"  // secret via env var, never in app.json
+    }
+  }
 }
 ```
 
@@ -258,12 +270,71 @@ public async Task<string> SummarizeAsync(
   final combined summary apply uniformly (weather, news, misc, todos), each just
   passing its own pair of delegates.
 
+### Rendering — structured model + format delegate (Markdown / HTML)
+
+The orchestrator builds a **structured, format-agnostic** document; formatting is
+a **delegate** so the same document renders as Markdown headers or HTML tags
+depending on the delivery channel.
+
+**Model** (`Models/`)
+```csharp
+public record SummarySection(string Heading, string Body);   // Body = markdown text from the LLM
+public record DailySummary(string Title, IReadOnlyList<SummarySection> Sections);
+public record RenderedSummary(string Subject, string Markdown, string Html); // the "triple"
+```
+
+Fixed title + section headings (Constants, not floating strings):
+`Daily Brief — {ddd, MMM d, yyyy}` · `Weather` · `Headlines` · `Site Updates` · `To-Dos`.
+Disabled/failed sections are simply omitted (or rendered as "_section unavailable_").
+
+**Format delegate** (`Rendering/`)
+```csharp
+public delegate string FormatSection(string heading, string body);
+
+static class SectionFormats
+{
+    public static string Markdown(string h, string b) => $"## {h}\n\n{b}\n";
+    public static string Html(string h, string b)     => $"<h2>{h}</h2>\n{Markdig.Markdown.ToHtml(b)}";
+}
+```
+
+**`SummaryRenderer`** walks `DailySummary.Sections`, applies the chosen
+`FormatSection` delegate, and prepends the title (`# …` for Markdown, `<h1>…` for
+HTML). It exposes both representations and packages them as the triple:
+
+```csharp
+public RenderedSummary Render(DailySummary s) => new(
+    Subject:  s.Title,                                  // email subject / file title
+    Markdown: RenderWith(s, SectionFormats.Markdown),   // file + console
+    Html:     RenderWith(s, SectionFormats.Html));      // email body
+```
+
+Because section bodies are markdown, the **HTML path runs each body through
+Markdig** so weather's morning/afternoon/evening bullets and news lists become
+real `<ul>`/`<p>` — no manual tag juggling.
+
+### Delivery — each channel pulls what it needs from the triple
+
+`IDeliveryChannel.DeliverAsync(RenderedSummary doc, ...)`:
+
+| Channel | Pulls from triple | Behavior |
+|---------|-------------------|----------|
+| `markdown` | `doc.Markdown` | writes `{outputDir}/{yyyy-MM-dd}.md` |
+| `console`  | `doc.Markdown` | prints to stdout / function logs |
+| `email`    | **all three** — `doc.Subject`, `doc.Html`, `doc.Markdown` | sends multipart email: HTML body + plaintext (Markdown) fallback |
+
+So "if email is the channel, we pull the HTML tags" = email uses `doc.Html` for
+the body and keeps `doc.Markdown` as the text/plain alternative; the subject is
+`doc.Title`. Markdown/console channels just ignore the `Html` field. Adding a new
+channel never changes the renderer — it only chooses which fields of the triple
+to use.
+
 ## 7. Build steps (when we implement)
 
 1. **Solution scaffold** — `DailySummary.sln` with four projects + test project; .NET 8 isolated worker.
 2. **Core abstractions & models** — interfaces + DTOs; `Constants/Prompts.cs` + `Constants/SummarizationLimits.cs`; `Summarization/` `SummarizeFunc` delegate + `TextChunker` + `ChunkedSummarizer` (map-reduce over delegates) + `SectionSummarizers` (named per-section delegates); `SummaryOrchestrator` (runs each enabled section, isolates failures, aggregates a `DailySummary`).
 3. **Config** — `AppConfig` model, `app.json` binding + validation, sample config.
-4. **Providers** — Open-Meteo weather; `PlaywrightPageFetcher` + Web news/misc providers (fetch→summarize); `ClaudeSummarizer` + `OllamaSummarizer` (factory keyed by config); `SqlTodoSource` + `GoogleCalendarTodoSource` stub; Markdown renderer + Markdown/console delivery.
+4. **Providers** — Open-Meteo weather; `PlaywrightPageFetcher` + Web news/misc providers (fetch→summarize); `ClaudeSummarizer` + `OllamaSummarizer` (factory keyed by config); `SqlTodoSource` + `GoogleCalendarTodoSource` stub; `SummaryRenderer` (Markdown + HTML via format delegate, produces the `RenderedSummary` triple); Markdown/console/email delivery channels.
 5. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI wiring selecting implementations from `app.json`.
 6. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Playwright Chromium + OS deps** (`playwright install --with-deps chromium` during build); `docker-compose.yml` (function + optional `ollama` sidecar).
 7. **Tests** — xUnit orchestrator test with in-memory fakes for every interface (wiring + failure isolation, no network); renderer/config-binding unit tests.
@@ -271,13 +342,13 @@ public async Task<string> SummarizeAsync(
 
 ## 8. Verification
 
-- **Unit/integration:** `dotnet test` — orchestrator produces a complete `DailySummary` from fakes; one failing section doesn't abort the run. `IPageFetcher` is faked here (no real browser in unit tests).
+- **Unit/integration:** `dotnet test` — orchestrator produces a complete `DailySummary` from fakes; one failing section doesn't abort the run. `IPageFetcher` is faked here (no real browser in unit tests). Renderer test asserts Markdown (`##` headers) and HTML (`<h2>` tags) outputs of the same `DailySummary` and that the email triple carries subject/html/text.
 - **Local run (no cloud):** `delivery.channel = "console"`, weather enabled (Open-Meteo, no key), summarizer = `ollama` (or a `fake` summarizer for offline). Real Playwright fetch hits the configured sites. Manually trigger via the Functions admin endpoint (`POST http://localhost:7071/admin/functions/DailySummaryFunction`) and confirm a rendered newspaper in console / `./out/*.md`.
 - **Docker:** `docker compose up`, same manual trigger, confirm output inside the container.
 - **Claude path (optional):** set `ANTHROPIC_API_KEY`, switch news summarizer to `claude`, re-trigger, confirm a real summary.
 
 ## 9. Out of scope (future)
 
-- Email / Slack delivery channels (interface ready, not implemented initially).
+- Slack / Teams / Discord delivery channels (interface ready; email + markdown + console ship initially).
 - Real Google Calendar OAuth flow (stub only initially).
 - Azure deployment automation (IaC / Bicep) — README instructions only.
