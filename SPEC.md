@@ -92,7 +92,9 @@ Each section's gather + summarize is wrapped so a failure degrades to a
                                      ITodoSource, IDeliveryChannel, ISummaryRenderer
     Constants/                     ← Prompts.cs (all prompt text), SummarizationLimits.cs (chunk sizes)
     Models/                        ← AppConfig, DailySummary, NewsItem, TodoItem, WeatherReport, PageContent
-    Summarization/                 ← TextChunker.cs (sliding-window split), ChunkedSummarizer.cs (map-reduce)
+    Summarization/                 ← SummarizeFunc.cs (delegate), TextChunker.cs (sliding-window split),
+                                     ChunkedSummarizer.cs (map-reduce over delegates),
+                                     SectionSummarizers.cs (named delegates per section)
     SummaryOrchestrator.cs
   DailySummary.Providers/          ← concrete implementations
     Weather/      OpenMeteoWeatherProvider.cs       (free, no API key)
@@ -205,19 +207,54 @@ public const string ReduceSuffix =     // appended for the final big pass
 `MaxChunkChars`, where each window after the first repeats the last
 `ChunkOverlapChars` of the previous window (so context isn't lost at the seam).
 
-**`ChunkedSummarizer`** wraps any `ISummarizer` and runs the map-reduce loop:
-1. **Map** — for each chunk, call the LLM with the section prompt → a chunk summary.
-2. **Reduce** — if there was more than one chunk, concatenate the chunk summaries
-   and make **one final pass** (section prompt + `ReduceSuffix`) → the single big summary.
-   A single-chunk input skips the reduce step and returns the map result directly.
+**Delegate-based summarization.** The chunk loop does not hard-code "call the
+LLM with a prompt". It takes a **delegate**, so each section passes its own
+summarize function and we can add new ones (news, weather, websites, …) without
+touching the loop:
 
-Every section runs through `ChunkedSummarizer`, so the 3k-char limit and the
-final combined summary apply uniformly (weather, news, misc, todos).
+```csharp
+// the unit of summarization work — one passable function
+public delegate Task<string> SummarizeFunc(string input, CancellationToken ct);
+```
+
+**`SectionSummarizers`** is a small factory that, given the configured
+`ISummarizer`, exposes named delegates that each close over the right prompt:
+`SummarizeWeather`, `SummarizeNews`, `SummarizeWebsites`/`SummarizeMisc`,
+`SummarizeTodos`. Adding a future section = adding one more delegate here.
+
+**`ChunkedSummarizer`** runs the map-reduce loop over **two delegates** — a
+per-chunk one and an explicit **final summarizer** that runs once at the end:
+
+```csharp
+public async Task<string> SummarizeAsync(
+    string source,
+    SummarizeFunc chunkSummarizer,   // runs for each chunk  (e.g. SummarizeNews)
+    SummarizeFunc finalSummarizer,   // runs ONCE at end to fold chunk summaries together
+    CancellationToken ct)
+{
+    var chunks = TextChunker.Split(source);          // 3k windows, 100-char overlap
+    if (chunks.Count == 1)
+        return await chunkSummarizer(chunks[0], ct);  // nothing to fold
+
+    var partials = new List<string>();
+    foreach (var chunk in chunks)
+        partials.Add(await chunkSummarizer(chunk, ct));     // map
+
+    return await finalSummarizer(string.Join("\n\n", partials), ct);  // final summarizer
+}
+```
+
+- The **final summarizer** is a real, separate delegate (not "whatever the last
+  chunk produced") — typically `SectionSummarizers` builds it from the section
+  prompt + `ReduceSuffix`, but any caller can pass a different fold function.
+- Every section runs through `ChunkedSummarizer`, so the 3k-char limit and the
+  final combined summary apply uniformly (weather, news, misc, todos), each just
+  passing its own pair of delegates.
 
 ## 7. Build steps (when we implement)
 
 1. **Solution scaffold** — `DailySummary.sln` with four projects + test project; .NET 8 isolated worker.
-2. **Core abstractions & models** — interfaces + DTOs; `Constants/Prompts.cs` + `Constants/SummarizationLimits.cs`; `Summarization/TextChunker` + `ChunkedSummarizer` (map-reduce); `SummaryOrchestrator` (runs each enabled section, isolates failures, aggregates a `DailySummary`).
+2. **Core abstractions & models** — interfaces + DTOs; `Constants/Prompts.cs` + `Constants/SummarizationLimits.cs`; `Summarization/` `SummarizeFunc` delegate + `TextChunker` + `ChunkedSummarizer` (map-reduce over delegates) + `SectionSummarizers` (named per-section delegates); `SummaryOrchestrator` (runs each enabled section, isolates failures, aggregates a `DailySummary`).
 3. **Config** — `AppConfig` model, `app.json` binding + validation, sample config.
 4. **Providers** — Open-Meteo weather; `PlaywrightPageFetcher` + Web news/misc providers (fetch→summarize); `ClaudeSummarizer` + `OllamaSummarizer` (factory keyed by config); `SqlTodoSource` + `GoogleCalendarTodoSource` stub; Markdown renderer + Markdown/console delivery.
 5. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI wiring selecting implementations from `app.json`.
