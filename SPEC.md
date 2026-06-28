@@ -76,6 +76,13 @@ Three explicit phases, run in order:
 Each section's gather + summarize is wrapped so a failure degrades to a
 "section unavailable" note rather than aborting the whole run.
 
+> **Summarization boundary.** The LLM only ever summarizes **individual pieces**
+> (a weather blurb, a news summary, a misc summary, a todo list). The **final
+> document is built by the orchestrator/renderer** — it stitches the already-
+> summarized pieces together mechanically. There is **no LLM pass over the whole
+> newspaper**. (The "final summarizer" delegate in §6 folds *chunks within one
+> section*, not the whole paper.)
+
 ## 4. Project layout
 
 ```
