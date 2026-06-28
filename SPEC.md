@@ -57,6 +57,25 @@ implementations are registered in DI and selected by `app.json`. Each section is
 independently toggleable and **failure-isolated** — a dead news site must not sink
 the weather section.
 
+### Orchestration flow (`SummaryOrchestrator.RunAsync`)
+
+Three explicit phases, run in order:
+
+1. **Gather** — collect all raw inputs for every enabled section:
+   weather (Open-Meteo), news + misc page text (Playwright `IPageFetcher`),
+   and to-dos (SQL / Google Calendar). Raw, un-summarized.
+2. **Summarize** — cycle each gathered part through the `ISummarizer` one at a
+   time (weather phrased into a blurb, each news/misc page condensed, to-dos
+   tidied into a list). The summarizer used per section is the one named in that
+   section's config.
+3. **Render & deliver** — `ISummaryRenderer` assembles the summarized parts into
+   one "newspaper" document, then `IDeliveryChannel` either **returns** it
+   (console / function output) or **writes the Markdown file** to the path from
+   `app.json` (`delivery.outputDir`, dated filename).
+
+Each section's gather + summarize is wrapped so a failure degrades to a
+"section unavailable" note rather than aborting the whole run.
+
 ## 4. Project layout
 
 ```
