@@ -40,13 +40,17 @@ and each section can be upgraded to a real service independently.
 Azure Functions Host (Docker)
   └─ DailySummaryFunction        ← [TimerTrigger("0 0 6 * * *")]  (06:00 daily)
         └─ ISummaryOrchestrator.RunAsync()
-              ├─ IWeatherProvider        → weather section
-              ├─ INewsProvider           → fetch news sites ─┐
-              ├─ IMiscUpdatesProvider    → fetch misc sites ─┤→ ISummarizer (Claude | Ollama)
-              ├─ ITodoSource (SQL|GCal)  → to-do list        ┘
+              ├─ IWeatherProvider        → Open-Meteo HTTP API → weather section
+              ├─ INewsProvider           → IPageFetcher (Playwright) ─┐
+              ├─ IMiscUpdatesProvider    → IPageFetcher (Playwright) ─┤→ ISummarizer (Claude | Ollama)
+              ├─ ITodoSource (SQL|GCal)  → to-do list                 ┘
               └─ ISummaryRenderer        → builds the "newspaper" document
                     └─ IDeliveryChannel  (Markdown/console | Email | Slack)
 ```
+
+The news and misc providers do **not** fetch HTML with `HttpClient` — they take an
+`IPageFetcher` (Playwright / headless Chromium) so JS-rendered home pages are
+captured as real rendered text, then pass that text to the `ISummarizer`.
 
 Core principle: the **orchestrator depends only on interfaces**; concrete
 implementations are registered in DI and selected by `app.json`. Each section is
@@ -64,14 +68,16 @@ the weather section.
     host.json, local.settings.json
     app.json                       ← user-facing config (location, sites, providers)
   DailySummary.Core/               ← orchestration + interfaces (no Azure dependency)
-    Abstractions/                  ← ISummaryOrchestrator, ISummarizer, IWeatherProvider,
-                                     INewsProvider, IMiscUpdatesProvider, ITodoSource,
-                                     IDeliveryChannel, ISummaryRenderer
-    Models/                        ← AppConfig, DailySummary, NewsItem, TodoItem, WeatherReport
+    Abstractions/                  ← ISummaryOrchestrator, ISummarizer, IPageFetcher,
+                                     IWeatherProvider, INewsProvider, IMiscUpdatesProvider,
+                                     ITodoSource, IDeliveryChannel, ISummaryRenderer
+    Models/                        ← AppConfig, DailySummary, NewsItem, TodoItem, WeatherReport, PageContent
     SummaryOrchestrator.cs
   DailySummary.Providers/          ← concrete implementations
     Weather/      OpenMeteoWeatherProvider.cs       (free, no API key)
-    News/         HttpNewsProvider.cs               (fetch + text extract)
+    Fetching/     PlaywrightPageFetcher.cs          (headless Chromium, JS-rendered text)
+    News/         WebNewsProvider.cs                (IPageFetcher → ISummarizer)
+    Misc/         WebMiscUpdatesProvider.cs         (IPageFetcher → ISummarizer)
     Summarizers/  ClaudeSummarizer.cs, OllamaSummarizer.cs
     Todos/        SqlTodoSource.cs, GoogleCalendarTodoSource.cs
     Delivery/     MarkdownFileDelivery.cs, ConsoleDelivery.cs
@@ -104,25 +110,63 @@ README.md
 Bound to a strongly-typed `AppConfig` via `IOptions<AppConfig>`. Secrets (API
 keys) come from **environment variables**, never committed in `app.json`.
 
-## 6. Build steps (when we implement)
+## 6. Section internals (the parts that were open questions)
+
+### Weather — Open-Meteo (free, no API key)
+
+`OpenMeteoWeatherProvider` issues one GET to:
+
+```
+https://api.open-meteo.com/v1/forecast
+  ?latitude={lat}&longitude={lon}
+  &current=temperature_2m,weather_code,wind_speed_10m
+  &daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code
+  &timezone=auto&temperature_unit={fahrenheit|celsius}
+```
+
+- `lat`/`lon`/`units` come from `app.json` → `weather` block.
+- The integer `weather_code` (WMO codes) is mapped to human text via a static
+  lookup (`0 → "Clear sky"`, `61 → "Light rain"`, …) in a `WmoWeatherCodes` helper.
+- Result projected into a `WeatherReport { Current, High, Low, PrecipChance, Condition }`.
+- No key, no auth, no sidecar — the happy path stays credential-free.
+
+### Page capture — Playwright (headless Chromium)
+
+`PlaywrightPageFetcher : IPageFetcher` is the **only** way news/misc pages are read.
+
+- On the first call per run it launches **one** Chromium instance
+  (`Playwright.CreateAsync()` → `Chromium.LaunchAsync(headless: true)`); each site
+  gets a fresh `IPage` (or browser context) so cookies/state don't leak between sites.
+- Per site: `page.GotoAsync(url, WaitUntil = NetworkIdle)` with a timeout, then
+  `page.InnerTextAsync("body")` to grab the fully rendered visible text.
+- Returns `PageContent { Url, Title, Text, FetchedAt }`; the text is what the
+  `ISummarizer` receives. Truncated to a max char budget before summarizing.
+- The fetcher is `IAsyncDisposable` — the browser is disposed at the end of the run.
+- Failures per site (timeout, nav error) are caught and logged; that site is
+  skipped, the rest of the newspaper still renders.
+- **Browser binary:** this environment ships Chromium at `/opt/pw-browsers`
+  (`PLAYWRIGHT_BROWSERS_PATH` set), so no download is needed locally. The Docker
+  image installs the browser + OS deps at build time (see Dockerization).
+
+## 7. Build steps (when we implement)
 
 1. **Solution scaffold** — `DailySummary.sln` with four projects + test project; .NET 8 isolated worker.
 2. **Core abstractions & models** — interfaces + DTOs; `SummaryOrchestrator` (runs each enabled section, isolates failures, aggregates a `DailySummary`).
 3. **Config** — `AppConfig` model, `app.json` binding + validation, sample config.
-4. **Providers** — Open-Meteo weather; HTTP news/misc fetch→summarize; `ClaudeSummarizer` + `OllamaSummarizer` (factory keyed by config); `SqlTodoSource` + `GoogleCalendarTodoSource` stub; Markdown renderer + Markdown/console delivery.
+4. **Providers** — Open-Meteo weather; `PlaywrightPageFetcher` + Web news/misc providers (fetch→summarize); `ClaudeSummarizer` + `OllamaSummarizer` (factory keyed by config); `SqlTodoSource` + `GoogleCalendarTodoSource` stub; Markdown renderer + Markdown/console delivery.
 5. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI wiring selecting implementations from `app.json`.
-6. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base; `docker-compose.yml` (function + optional `ollama` sidecar).
+6. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Playwright Chromium + OS deps** (`playwright install --with-deps chromium` during build); `docker-compose.yml` (function + optional `ollama` sidecar).
 7. **Tests** — xUnit orchestrator test with in-memory fakes for every interface (wiring + failure isolation, no network); renderer/config-binding unit tests.
 8. **README** — configure `app.json`, run locally (`func start` / `docker compose up`), deploy to Azure.
 
-## 7. Verification
+## 8. Verification
 
-- **Unit/integration:** `dotnet test` — orchestrator produces a complete `DailySummary` from fakes; one failing section doesn't abort the run.
-- **Local run (no cloud):** `delivery.channel = "console"`, weather enabled (Open-Meteo, no key), summarizer = `ollama` (or a `fake` summarizer for offline). Manually trigger via the Functions admin endpoint (`POST http://localhost:7071/admin/functions/DailySummaryFunction`) and confirm a rendered newspaper in console / `./out/*.md`.
+- **Unit/integration:** `dotnet test` — orchestrator produces a complete `DailySummary` from fakes; one failing section doesn't abort the run. `IPageFetcher` is faked here (no real browser in unit tests).
+- **Local run (no cloud):** `delivery.channel = "console"`, weather enabled (Open-Meteo, no key), summarizer = `ollama` (or a `fake` summarizer for offline). Real Playwright fetch hits the configured sites. Manually trigger via the Functions admin endpoint (`POST http://localhost:7071/admin/functions/DailySummaryFunction`) and confirm a rendered newspaper in console / `./out/*.md`.
 - **Docker:** `docker compose up`, same manual trigger, confirm output inside the container.
 - **Claude path (optional):** set `ANTHROPIC_API_KEY`, switch news summarizer to `claude`, re-trigger, confirm a real summary.
 
-## 8. Out of scope (future)
+## 9. Out of scope (future)
 
 - Email / Slack delivery channels (interface ready, not implemented initially).
 - Real Google Calendar OAuth flow (stub only initially).
