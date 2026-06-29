@@ -23,6 +23,7 @@ the orchestrator dispatches by that type to a gatherer. Ship-day types:
    from them. Questions are a JSON array in the section's `settings`.
 5. **Email** — digest a Gmail inbox (IMAP + app password, no OAuth) into key items
    and action items.
+6. **RSS** — digest RSS/Atom feeds (structured XML, no browser) into per-feed summaries.
 
 New section *instances* are pure JSON; new *types* (e.g. **Email**, RSS) are one
 small class each. Everything external (LLM, page fetch, gather source, delivery)
@@ -127,6 +128,7 @@ rather than aborting the run.
     SummaryOrchestrator.cs
   DailySummary.Providers/          ← concrete implementations
     Gatherers/    WeatherGatherer.cs (Open-Meteo), WebGatherer.cs (IPageFetcher),
+                  RssGatherer.cs (HttpClient + SyndicationFeed, no browser),
                   SqlGatherer.cs, GoogleCalendarGatherer.cs, QuestionGatherer.cs,
                   EmailGatherer.cs (Gmail IMAP via MailKit)
                   — each declares its SectionType + binds its own `settings` JSON
@@ -193,7 +195,12 @@ README.md
       "timeoutSeconds": 90,
       "settings": { "imapHost": "imap.gmail.com", "imapPort": 993, "username": "you@gmail.com",
                     "passwordEnv": "GMAIL_APP_PASSWORD", "mailbox": "INBOX",
-                    "unreadOnly": true, "since": "today", "maxMessages": 50 } }
+                    "unreadOnly": true, "since": "today", "maxMessages": 50 } },
+
+    { "type": "rss", "heading": "Feeds", "order": 6, "summarizer": "ollama",
+      "timeoutSeconds": 45,
+      "settings": { "feeds": ["https://hnrss.org/frontpage", "https://www.theverge.com/rss/index.xml"],
+                    "maxItemsPerFeed": 10, "since": "1d", "fetchFullArticle": false } }
   ]
 }
 ```
@@ -227,7 +234,7 @@ https://api.open-meteo.com/v1/forecast
 Sections are **data, not code**. Each `sections[]` entry binds to a `SectionConfig`:
 
 ```csharp
-public enum SectionType { Weather, Web, Sql, GoogleCalendar, Question, Email /* add a case per new type */ }
+public enum SectionType { Weather, Web, Rss, Sql, GoogleCalendar, Question, Email /* add a case per new type */ }
 
 public record SectionConfig(
     SectionType Type, string Heading, int Order, string Summarizer,
@@ -327,6 +334,35 @@ question injected; everything else uses the section's static prompt.
 **Rendering.** Each question's answer renders as a `### {question}` sub-heading +
 its answer, in order — so one `question` section with 5 questions → 5 Q&A entries
 under the one section heading.
+
+### RSS / Atom feeds — structured XML, no browser
+
+An `rss` section digests feeds. Unlike `web`, feeds are **structured XML**, so this
+uses a plain `HttpClient` + `System.ServiceModel.Syndication.SyndicationFeed` (parses
+RSS 2.0 **and** Atom) — **no Playwright/Firefox** (cheaper, faster, no bot-detection
+concerns). It's the one web source that skips the browser.
+
+```jsonc
+{ "type": "rss", "heading": "Feeds", "order": 6, "summarizer": "ollama",
+  "timeoutSeconds": 45,
+  "settings": {
+    "feeds": ["https://hnrss.org/frontpage", "https://www.theverge.com/rss/index.xml"],
+    "maxItemsPerFeed": 10,
+    "since": "1d",
+    "fetchFullArticle": false   // true → pull each item's link via IPageFetcher (Firefox) for full text
+  } }
+```
+
+Flow in `RssGatherer` (concurrent producer):
+1. Per feed URL: `HttpClient` GET → `SyndicationFeed.Load(reader)`.
+2. Keep items newer than `since`, capped at `maxItemsPerFeed`.
+3. Item text = `Title` + `Summary`/`Content`; if `fetchFullArticle`, replace the body
+   with `IPageFetcher(item.Link)` (the only time RSS touches the browser).
+4. Emit one `RawPiece` per item, `SubHeading = feed title` (so each feed folds to its
+   own digest), `Instruction = null`.
+
+Fold: per feed (by `SubHeading`) → one digest per feed; renders `### {feed title}` +
+digest. A dead feed degrades to "section unavailable" and the others proceed.
 
 ### Email (Gmail) — IMAP + app password, no OAuth
 
@@ -550,7 +586,7 @@ to use.
 2. **Core abstractions & models** — `ISectionGatherer`, `ISummarizer`, `IPageFetcher`, `IDeliveryChannel`, `ISummaryRenderer`; `SectionType` enum, `SectionConfig`, `RawPiece`, `DailySummary`/`SummarySection`/`RenderedSummary`; `Constants/Prompts.cs` (default per type) + `SummarizationLimits.cs`; `Summarization/` (`SummarizeFunc` + `TextChunker` + `ChunkedSummarizer` + `SectionSummarizers`).
 3. **Config** — `AppConfig` (`sections[]`, `concurrency`, `channelCapacity`, `browser`, `delivery`), `app.json` binding + validation; per-type `Settings` bound via `JsonElement`.
 4. **Pipeline + registry** — `SectionGathererRegistry` (enum→gatherer); `GatherSummarizePipeline` (bounded Channel: concurrent producers → serial consumer + section fold); `SummaryOrchestrator` iterating `sections[]`.
-5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `SqlGatherer`; `GoogleCalendarGatherer` stub; `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `EmailGatherer` (Gmail IMAP via MailKit, app password); `ClaudeSummarizer` + `OllamaSummarizer`; `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
+5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `RssGatherer` (HttpClient + `SyndicationFeed`, no browser); `SqlGatherer`; `GoogleCalendarGatherer` stub; `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `EmailGatherer` (Gmail IMAP via MailKit, app password); `ClaudeSummarizer` + `OllamaSummarizer`; `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
 6. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI registering every `ISectionGatherer` (→ registry) + selecting summarizer/delivery from `app.json`.
 7. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Firefox + Xvfb + OS deps** (`playwright install --with-deps firefox`, `xvfb`); run the host under `xvfb-run`; `docker-compose.yml` (function + optional `ollama` sidecar).
 8. **Tests** — xUnit: pipeline test (concurrent gather + serial summarize + section fold + ordering) with a fake gatherer/summarizer; failure/timeout → "unavailable"; renderer Markdown/HTML/triple asserts; config + `Settings` binding.
@@ -564,11 +600,12 @@ to use.
 - **Scale check:** a `web` section with a large `urls` list — confirm flat memory (bounded channel), serial LLM lane, and one folded section in the output.
 - **Question section:** a `question` section with 2–3 questions — confirm each is searched (DuckDuckGo, keyless), top results fetched, and rendered as `### {question}` + an answer; a question with no usable results renders "couldn't answer from sources" rather than failing the run.
 - **Email section:** with `GMAIL_APP_PASSWORD` set, an `email` section connects to Gmail IMAP, pulls today's/unread messages (capped), and renders one inbox digest; a bad/missing password degrades to "section unavailable", not a crash.
+- **RSS section:** an `rss` section with 2 feeds — confirm XML parsing (no browser launched for it), per-feed `### {feed title}` digests, `since`/`maxItemsPerFeed` honored, and a dead feed degrades without sinking the others.
 - **Claude path (optional):** set `ANTHROPIC_API_KEY`, switch a section's summarizer to `claude`, re-trigger, confirm a real summary.
 
 ## 9. Out of scope (future)
 
-- New section *types* beyond Weather/Web/Sql/GoogleCalendar/Question/Email — e.g. RSS, Reddit. The model supports them; each is one `ISectionGatherer` + enum case + registration when wanted.
+- New section *types* beyond Weather/Web/Rss/Sql/GoogleCalendar/Question/Email — e.g. Reddit, podcasts. The model supports them; each is one `ISectionGatherer` + enum case + registration when wanted.
 - **Outlook / Microsoft Graph** email and Gmail **OAuth2 (XOAUTH2)** — same `EmailGatherer` interface; Gmail IMAP + app password ships first to avoid the OAuth flow.
 - Keyed search backends for `question` sections (Brave/Google CSE) behind `IWebSearch`; DuckDuckGo (keyless) ships first.
 - Slack / Teams / Discord delivery channels (interface ready; email + markdown + console ship initially).
