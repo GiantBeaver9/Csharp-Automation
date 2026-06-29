@@ -21,6 +21,8 @@ the orchestrator dispatches by that type to a gatherer. Ship-day types:
 4. **Question** — answer free-form questions ("search for X", "what's the forecast
    in Y?") by web-searching, fetching the top results, and having the LLM answer
    from them. Questions are a JSON array in the section's `settings`.
+5. **Email** — digest a Gmail inbox (IMAP + app password, no OAuth) into key items
+   and action items.
 
 New section *instances* are pure JSON; new *types* (e.g. **Email**, RSS) are one
 small class each. Everything external (LLM, page fetch, gather source, delivery)
@@ -126,7 +128,7 @@ rather than aborting the run.
   DailySummary.Providers/          ← concrete implementations
     Gatherers/    WeatherGatherer.cs (Open-Meteo), WebGatherer.cs (IPageFetcher),
                   SqlGatherer.cs, GoogleCalendarGatherer.cs, QuestionGatherer.cs,
-                  (future) EmailGatherer.cs
+                  EmailGatherer.cs (Gmail IMAP via MailKit)
                   — each declares its SectionType + binds its own `settings` JSON
     Fetching/     PlaywrightPageFetcher.cs          (Firefox, headed, JS-rendered text)
     Search/       IWebSearch.cs, DuckDuckGoSearch.cs (keyless via fetcher), (future) BraveSearch.cs
@@ -185,11 +187,13 @@ README.md
       "timeoutSeconds": 90,
       "settings": { "engine": "duckduckgo", "resultsPerQuestion": 3,
                     "questions": [ "What's the forecast for Tokyo this weekend?",
-                                   "search for recent .NET 9 news" ] } }
+                                   "search for recent .NET 9 news" ] } },
 
-    // future, once EmailGatherer + the SectionType.Email case exist — pure JSON to add then:
-    // { "type": "email", "heading": "Inbox", "order": 4, "summarizer": "claude",
-    //   "timeoutSeconds": 90, "settings": { "imapHost": "...", "mailbox": "INBOX", "passwordEnv": "MAIL_PW" } }
+    { "type": "email", "heading": "Inbox", "order": 5, "summarizer": "claude",
+      "timeoutSeconds": 90,
+      "settings": { "imapHost": "imap.gmail.com", "imapPort": 993, "username": "you@gmail.com",
+                    "passwordEnv": "GMAIL_APP_PASSWORD", "mailbox": "INBOX",
+                    "unreadOnly": true, "since": "today", "maxMessages": 50 } }
   ]
 }
 ```
@@ -323,6 +327,38 @@ question injected; everything else uses the section's static prompt.
 **Rendering.** Each question's answer renders as a `### {question}` sub-heading +
 its answer, in order — so one `question` section with 5 questions → 5 Q&A entries
 under the one section heading.
+
+### Email (Gmail) — IMAP + app password, no OAuth
+
+An `email` section digests a mailbox. **Gmail over IMAP** is the first backend:
+with 2-Step Verification on and a generated **App Password**, IMAP authenticates
+with plain username + password — **no interactive OAuth** (the reason Outlook/Graph
+are deferred). `EmailGatherer` uses `MailKit`.
+
+```jsonc
+{ "type": "email", "heading": "Inbox", "order": 5, "summarizer": "claude",
+  "timeoutSeconds": 90,
+  "settings": {
+    "imapHost": "imap.gmail.com", "imapPort": 993,
+    "username": "you@gmail.com", "passwordEnv": "GMAIL_APP_PASSWORD",  // app password via env var
+    "mailbox": "INBOX", "unreadOnly": true, "since": "today", "maxMessages": 50
+  } }
+```
+
+Flow in `EmailGatherer` (concurrent producer like any other):
+1. `MailKit.ImapClient` connects TLS to `imapHost:imapPort`, authenticates with
+   `username` + the app password from `passwordEnv`.
+2. Search the `mailbox`: `since` (e.g. midnight today) and/or `unreadOnly`, capped at
+   `maxMessages`.
+3. Per message: pull `From`, `Subject`, and the text body (prefer `text/plain`; else
+   convert the `text/html` part to text). Emit **one `RawPiece` per email**
+   (`Heading = "Inbox"`, `SubHeading = null`).
+4. Section fold: all emails → **one inbox digest** via `Prompts.Email` ("Summarize the
+   inbox into key items and any action items.").
+
+Setup note: Gmail needs **2-Step Verification enabled** and an **App Password**
+generated; store it in `GMAIL_APP_PASSWORD`, never in `app.json`. (Outlook/Graph and
+full OAuth2 XOAUTH2 stay out of scope — same `ISectionGatherer`, added later.)
 
 ### Concurrency pipeline — bounded Channel, fan-out fetch → single LLM lane
 
@@ -514,7 +550,7 @@ to use.
 2. **Core abstractions & models** — `ISectionGatherer`, `ISummarizer`, `IPageFetcher`, `IDeliveryChannel`, `ISummaryRenderer`; `SectionType` enum, `SectionConfig`, `RawPiece`, `DailySummary`/`SummarySection`/`RenderedSummary`; `Constants/Prompts.cs` (default per type) + `SummarizationLimits.cs`; `Summarization/` (`SummarizeFunc` + `TextChunker` + `ChunkedSummarizer` + `SectionSummarizers`).
 3. **Config** — `AppConfig` (`sections[]`, `concurrency`, `channelCapacity`, `browser`, `delivery`), `app.json` binding + validation; per-type `Settings` bound via `JsonElement`.
 4. **Pipeline + registry** — `SectionGathererRegistry` (enum→gatherer); `GatherSummarizePipeline` (bounded Channel: concurrent producers → serial consumer + section fold); `SummaryOrchestrator` iterating `sections[]`.
-5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `SqlGatherer`; `GoogleCalendarGatherer` stub; `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `ClaudeSummarizer` + `OllamaSummarizer`; `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
+5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `SqlGatherer`; `GoogleCalendarGatherer` stub; `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `EmailGatherer` (Gmail IMAP via MailKit, app password); `ClaudeSummarizer` + `OllamaSummarizer`; `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
 6. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI registering every `ISectionGatherer` (→ registry) + selecting summarizer/delivery from `app.json`.
 7. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Firefox + Xvfb + OS deps** (`playwright install --with-deps firefox`, `xvfb`); run the host under `xvfb-run`; `docker-compose.yml` (function + optional `ollama` sidecar).
 8. **Tests** — xUnit: pipeline test (concurrent gather + serial summarize + section fold + ordering) with a fake gatherer/summarizer; failure/timeout → "unavailable"; renderer Markdown/HTML/triple asserts; config + `Settings` binding.
@@ -527,11 +563,13 @@ to use.
 - **Docker:** `docker compose up` (Firefox runs under Xvfb), same trigger, confirm output inside the container.
 - **Scale check:** a `web` section with a large `urls` list — confirm flat memory (bounded channel), serial LLM lane, and one folded section in the output.
 - **Question section:** a `question` section with 2–3 questions — confirm each is searched (DuckDuckGo, keyless), top results fetched, and rendered as `### {question}` + an answer; a question with no usable results renders "couldn't answer from sources" rather than failing the run.
+- **Email section:** with `GMAIL_APP_PASSWORD` set, an `email` section connects to Gmail IMAP, pulls today's/unread messages (capped), and renders one inbox digest; a bad/missing password degrades to "section unavailable", not a crash.
 - **Claude path (optional):** set `ANTHROPIC_API_KEY`, switch a section's summarizer to `claude`, re-trigger, confirm a real summary.
 
 ## 9. Out of scope (future)
 
-- New section *types* beyond Weather/Web/Sql/GoogleCalendar/Question — e.g. **Email**, RSS, Reddit. The model supports them; each is one `ISectionGatherer` + enum case + registration when wanted.
+- New section *types* beyond Weather/Web/Sql/GoogleCalendar/Question/Email — e.g. RSS, Reddit. The model supports them; each is one `ISectionGatherer` + enum case + registration when wanted.
+- **Outlook / Microsoft Graph** email and Gmail **OAuth2 (XOAUTH2)** — same `EmailGatherer` interface; Gmail IMAP + app password ships first to avoid the OAuth flow.
 - Keyed search backends for `question` sections (Brave/Google CSE) behind `IWebSearch`; DuckDuckGo (keyless) ships first.
 - Slack / Teams / Discord delivery channels (interface ready; email + markdown + console ship initially).
 - Real Google Calendar OAuth flow (stub only initially).
