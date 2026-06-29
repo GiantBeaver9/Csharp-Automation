@@ -294,14 +294,25 @@ array; each one is searched, the top results are fetched, and the LLM answers
   } }
 ```
 
-Flow in `QuestionGatherer` (per question, questions run as concurrent producers):
-1. `IWebSearch.SearchAsync(question, resultsPerQuestion)` → result URLs.
-   Default `DuckDuckGoSearch` scrapes the keyless HTML endpoint **through the same
-   `IPageFetcher`** — no API key. (A keyed `BraveSearch` can be dropped in later
-   behind the same interface, `apiKeyEnv` in settings.)
-2. Fetch each result page via `IPageFetcher` → text.
-3. Emit a `RawPiece` per result, tagged `SubHeading = question` and
+End-to-end flow (per question):
+
+**Gather** (`QuestionGatherer`, runs as a concurrent producer):
+1. **Search for X** → `IWebSearch.SearchAsync(question, resultsPerQuestion)` returns
+   the **top result links**. Default `DuckDuckGoSearch` scrapes the keyless HTML
+   endpoint **through the same `IPageFetcher`** — no API key. (A keyed `BraveSearch`
+   can drop in later behind the same interface, `apiKeyEnv` in settings.)
+2. **Iterate the links** → fetch each result page via `IPageFetcher` → text.
+3. Emit one `RawPiece` **per result page**, tagged `SubHeading = question` and
    `Instruction = question`.
+
+**Summarize** (pipeline consumer) — a **two-level fold**:
+4. **Per page (chunks):** each result `RawPiece` goes through `ChunkedSummarizer`
+   → split into 3k chunks → summarize each → fold into that page's summary.
+   "Summarize each one by chunks."
+5. **Per question (list → answer):** all of a question's page summaries are gathered
+   (grouped by `SubHeading`) and sent to the LLM in **one final call** — the section's
+   `Final` delegate, carrying `Prompts.Question` + the question — producing the answer.
+   "Send the entire list of summaries to the LLM."
 
 **Dynamic prompt.** This is the one section whose prompt isn't static: the
 summarize delegate uses `Prompts.Question` ("Answer the question using only the
@@ -309,10 +320,9 @@ provided sources; if they don't answer it, say so.") **plus the piece's
 `Instruction`** (the question text). Pieces with a non-null `Instruction` get the
 question injected; everything else uses the section's static prompt.
 
-**Per-question fold.** Because each piece carries `SubHeading = question`, the
-section folds **per question** (not one blob for the whole section) → one answer
-each. The section renders as a `### {question}` sub-heading + its answer, in order.
-So one `question` section with 5 questions → 5 Q&A entries under one heading.
+**Rendering.** Each question's answer renders as a `### {question}` sub-heading +
+its answer, in order — so one `question` section with 5 questions → 5 Q&A entries
+under the one section heading.
 
 ### Concurrency pipeline — bounded Channel, fan-out fetch → single LLM lane
 
