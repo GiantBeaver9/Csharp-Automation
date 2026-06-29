@@ -18,6 +18,9 @@ the orchestrator dispatches by that type to a gatherer. Ship-day types:
 2. **Web** — fetch configured sites (Playwright/Firefox) and have an LLM summarize
    them. Used for news, misc updates, changelogs — any number of `web` sections.
 3. **Sql / GoogleCalendar** — pull today's events/tasks into a to-do list.
+4. **Question** — answer free-form questions ("search for X", "what's the forecast
+   in Y?") by web-searching, fetching the top results, and having the LLM answer
+   from them. Questions are a JSON array in the section's `settings`.
 
 New section *instances* are pure JSON; new *types* (e.g. **Email**, RSS) are one
 small class each. Everything external (LLM, page fetch, gather source, delivery)
@@ -122,9 +125,11 @@ rather than aborting the run.
     SummaryOrchestrator.cs
   DailySummary.Providers/          ← concrete implementations
     Gatherers/    WeatherGatherer.cs (Open-Meteo), WebGatherer.cs (IPageFetcher),
-                  SqlGatherer.cs, GoogleCalendarGatherer.cs, (future) EmailGatherer.cs
+                  SqlGatherer.cs, GoogleCalendarGatherer.cs, QuestionGatherer.cs,
+                  (future) EmailGatherer.cs
                   — each declares its SectionType + binds its own `settings` JSON
     Fetching/     PlaywrightPageFetcher.cs          (Firefox, headed, JS-rendered text)
+    Search/       IWebSearch.cs, DuckDuckGoSearch.cs (keyless via fetcher), (future) BraveSearch.cs
     Summarizers/  ClaudeSummarizer.cs, OllamaSummarizer.cs
     Delivery/     MarkdownFileDelivery.cs, ConsoleDelivery.cs, EmailDelivery.cs
 /tests
@@ -174,7 +179,13 @@ README.md
 
     { "type": "sql", "heading": "To-Dos", "order": 3, "summarizer": "ollama",
       "timeoutSeconds": 30,
-      "settings": { "connectionStringEnv": "TODO_DB", "query": "SELECT title, due FROM tasks WHERE due::date = CURRENT_DATE" } }
+      "settings": { "connectionStringEnv": "TODO_DB", "query": "SELECT title, due FROM tasks WHERE due::date = CURRENT_DATE" } },
+
+    { "type": "question", "heading": "Q&A", "order": 4, "summarizer": "claude",
+      "timeoutSeconds": 90,
+      "settings": { "engine": "duckduckgo", "resultsPerQuestion": 3,
+                    "questions": [ "What's the forecast for Tokyo this weekend?",
+                                   "search for recent .NET 9 news" ] } }
 
     // future, once EmailGatherer + the SectionType.Email case exist — pure JSON to add then:
     // { "type": "email", "heading": "Inbox", "order": 4, "summarizer": "claude",
@@ -212,7 +223,7 @@ https://api.open-meteo.com/v1/forecast
 Sections are **data, not code**. Each `sections[]` entry binds to a `SectionConfig`:
 
 ```csharp
-public enum SectionType { Weather, Web, Sql, GoogleCalendar, Email /* add a case per new type */ }
+public enum SectionType { Weather, Web, Sql, GoogleCalendar, Question, Email /* add a case per new type */ }
 
 public record SectionConfig(
     SectionType Type, string Heading, int Order, string Summarizer,
@@ -227,7 +238,10 @@ public interface ISectionGatherer
     SectionType Type { get; }                                    // self-declares its enum
     Task<IReadOnlyList<RawPiece>> GatherAsync(SectionConfig cfg, CancellationToken ct);
 }
-// RawPiece { int SectionOrder; string Heading; string Text; }  — one per source (URL, row, email…)
+// RawPiece { int SectionOrder; string Heading; string? SubHeading; string? Instruction; string Text; }
+//   - one per source (URL, row, email, search result…)
+//   - SubHeading  groups pieces within a section (e.g. one per question) → folded separately
+//   - Instruction injects per-piece prompt context (e.g. the question being answered); usually null
 ```
 
 `GatherAsync` deserializes its own slice: `cfg.Settings.Deserialize<WebSettings>()` etc.
@@ -259,6 +273,47 @@ detection markedly better.
   **Xvfb** (virtual framebuffer); the image installs Firefox + OS deps via
   `playwright install --with-deps firefox` and `xvfb` (see Dockerization).
 
+### Question / Search sections — ask, search the web, answer
+
+A `question` section answers free-form questions ("What's the forecast for Tokyo
+this weekend?", "search for the .NET 9 release date"). Questions live in a JSON
+array; each one is searched, the top results are fetched, and the LLM answers
+**from those sources**.
+
+```jsonc
+{ "type": "question", "heading": "Q&A", "order": 5, "summarizer": "claude",
+  "timeoutSeconds": 90,
+  "settings": {
+    "engine": "duckduckgo",        // keyless default (scraped via the Firefox fetcher)
+    "resultsPerQuestion": 3,       // top-N result pages fed to the LLM per question
+    "questions": [
+      "What's the weather forecast for Tokyo this weekend?",
+      "search for recent news on the .NET 9 release",
+      "When is the next SpaceX launch?"
+    ]
+  } }
+```
+
+Flow in `QuestionGatherer` (per question, questions run as concurrent producers):
+1. `IWebSearch.SearchAsync(question, resultsPerQuestion)` → result URLs.
+   Default `DuckDuckGoSearch` scrapes the keyless HTML endpoint **through the same
+   `IPageFetcher`** — no API key. (A keyed `BraveSearch` can be dropped in later
+   behind the same interface, `apiKeyEnv` in settings.)
+2. Fetch each result page via `IPageFetcher` → text.
+3. Emit a `RawPiece` per result, tagged `SubHeading = question` and
+   `Instruction = question`.
+
+**Dynamic prompt.** This is the one section whose prompt isn't static: the
+summarize delegate uses `Prompts.Question` ("Answer the question using only the
+provided sources; if they don't answer it, say so.") **plus the piece's
+`Instruction`** (the question text). Pieces with a non-null `Instruction` get the
+question injected; everything else uses the section's static prompt.
+
+**Per-question fold.** Because each piece carries `SubHeading = question`, the
+section folds **per question** (not one blob for the whole section) → one answer
+each. The section renders as a `### {question}` sub-heading + its answer, in order.
+So one `question` section with 5 questions → 5 Q&A entries under one heading.
+
 ### Concurrency pipeline — bounded Channel, fan-out fetch → single LLM lane
 
 `GatherSummarizePipeline` is a producer→consumer over `System.Threading.Channels`:
@@ -272,16 +327,23 @@ await Parallel.ForEachAsync(allGathers, new(){MaxDegreeOfParallelism = cfg.Fetch
 });
 channel.Writer.Complete();
 // CONSUMER(S) — concurrency.summarize lanes (default 1); drain as items arrive
-await foreach (var piece in channel.Reader.ReadAllAsync(ct))
-    partials[piece.SectionOrder].Add(await chunked.SummarizeAsync(piece.Text, fn.Chunk, fn.Final, ct));
+await foreach (var piece in channel.Reader.ReadAllAsync(ct)) {
+    var fn = summarizers.For(piece);   // section prompt (+ piece.Instruction if present)
+    partials[(piece.SectionOrder, piece.SubHeading)].Add(
+        await chunked.SummarizeAsync(piece.Text, fn.Chunk, fn.Final, ct));
+}
 ```
 
 - **Overlap:** the LLM starts on the first arrival while later fetches are still
   running — fetch latency hides behind LLM work.
 - **Two-stage summarization for scale:** per-source summaries accumulate per
-  `SectionOrder`; after the drain, each section's list is **folded** via its `Final`
-  delegate into one section entry. So "Headlines" with 500 URLs → 500 page summaries
-  → one folded section — the newspaper never balloons to 500 blurbs.
+  `(SectionOrder, SubHeading)`; after the drain, each group is **folded** via its
+  `Final` delegate into one entry. `SubHeading == null` → one group per section
+  (the common case); a `question` section → one group per question. So "Headlines"
+  with 500 URLs → 500 page summaries → one folded section; a `question` section with
+  5 questions → 5 folded Q&A entries. The newspaper never balloons to 500 blurbs.
+- **Dynamic prompt:** `summarizers.For(piece)` builds the delegate from the section
+  prompt and, when `piece.Instruction` is set, injects it (the question being answered).
 - **500-page behavior:** memory stays **flat** (bounded channel blocks producers when
   the LLM lane lags); 500 URLs queue through `fetch` lanes (not 500 browsers); the
   single LLM lane is the throughput ceiling (fine for a 6am batch; raise
@@ -442,7 +504,7 @@ to use.
 2. **Core abstractions & models** — `ISectionGatherer`, `ISummarizer`, `IPageFetcher`, `IDeliveryChannel`, `ISummaryRenderer`; `SectionType` enum, `SectionConfig`, `RawPiece`, `DailySummary`/`SummarySection`/`RenderedSummary`; `Constants/Prompts.cs` (default per type) + `SummarizationLimits.cs`; `Summarization/` (`SummarizeFunc` + `TextChunker` + `ChunkedSummarizer` + `SectionSummarizers`).
 3. **Config** — `AppConfig` (`sections[]`, `concurrency`, `channelCapacity`, `browser`, `delivery`), `app.json` binding + validation; per-type `Settings` bound via `JsonElement`.
 4. **Pipeline + registry** — `SectionGathererRegistry` (enum→gatherer); `GatherSummarizePipeline` (bounded Channel: concurrent producers → serial consumer + section fold); `SummaryOrchestrator` iterating `sections[]`.
-5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `SqlGatherer`; `GoogleCalendarGatherer` stub; `ClaudeSummarizer` + `OllamaSummarizer`; `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
+5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `SqlGatherer`; `GoogleCalendarGatherer` stub; `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `ClaudeSummarizer` + `OllamaSummarizer`; `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
 6. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI registering every `ISectionGatherer` (→ registry) + selecting summarizer/delivery from `app.json`.
 7. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Firefox + Xvfb + OS deps** (`playwright install --with-deps firefox`, `xvfb`); run the host under `xvfb-run`; `docker-compose.yml` (function + optional `ollama` sidecar).
 8. **Tests** — xUnit: pipeline test (concurrent gather + serial summarize + section fold + ordering) with a fake gatherer/summarizer; failure/timeout → "unavailable"; renderer Markdown/HTML/triple asserts; config + `Settings` binding.
@@ -454,11 +516,13 @@ to use.
 - **Local run (no cloud):** `delivery.channel = "console"`, a `weather` section (Open-Meteo, no key) + a `web` section, summarizer = `ollama` (or a `fake` for offline). Real Firefox (headed) fetch hits the sites. Trigger via the admin endpoint (`POST http://localhost:7071/admin/functions/DailySummaryFunction`) and confirm a rendered newspaper in console / `./out/*.md`.
 - **Docker:** `docker compose up` (Firefox runs under Xvfb), same trigger, confirm output inside the container.
 - **Scale check:** a `web` section with a large `urls` list — confirm flat memory (bounded channel), serial LLM lane, and one folded section in the output.
+- **Question section:** a `question` section with 2–3 questions — confirm each is searched (DuckDuckGo, keyless), top results fetched, and rendered as `### {question}` + an answer; a question with no usable results renders "couldn't answer from sources" rather than failing the run.
 - **Claude path (optional):** set `ANTHROPIC_API_KEY`, switch a section's summarizer to `claude`, re-trigger, confirm a real summary.
 
 ## 9. Out of scope (future)
 
-- New section *types* beyond Weather/Web/Sql/GoogleCalendar — e.g. **Email**, RSS, Reddit. The model supports them; each is one `ISectionGatherer` + enum case + registration when wanted.
+- New section *types* beyond Weather/Web/Sql/GoogleCalendar/Question — e.g. **Email**, RSS, Reddit. The model supports them; each is one `ISectionGatherer` + enum case + registration when wanted.
+- Keyed search backends for `question` sections (Brave/Google CSE) behind `IWebSearch`; DuckDuckGo (keyless) ships first.
 - Slack / Teams / Discord delivery channels (interface ready; email + markdown + console ship initially).
 - Real Google Calendar OAuth flow (stub only initially).
 - Azure deployment automation (IaC / Bicep) — README instructions only.
