@@ -25,6 +25,8 @@ the orchestrator dispatches by that type to a gatherer. Ship-day types:
 5. **Email** — digest a Gmail inbox (IMAP + app password, no OAuth) into key items
    and action items.
 6. **RSS** — digest RSS/Atom feeds (structured XML, no browser) into per-feed summaries.
+   **Reddit** is just `rss` feed URLs — no separate type.
+7. **Podcast** — transcribe recent episodes (local Whisper) and summarize what was said.
 
 New section *instances* are pure JSON; new *types* (e.g. **Email**, RSS) are one
 small class each. Everything external (LLM, page fetch, gather source, delivery)
@@ -130,11 +132,13 @@ rather than aborting the run.
   DailySummary.Providers/          ← concrete implementations
     Gatherers/    WeatherGatherer.cs (Open-Meteo), WebGatherer.cs (IPageFetcher),
                   RssGatherer.cs (HttpClient + SyndicationFeed, no browser),
+                  PodcastGatherer.cs (RSS + ffmpeg + ITranscriber),
                   SqlGatherer.cs, GoogleCalendarGatherer.cs (secret iCal URL + Ical.Net),
                   QuestionGatherer.cs, EmailGatherer.cs (Gmail IMAP via MailKit)
                   — each declares its SectionType + binds its own `settings` JSON
     Fetching/     PlaywrightPageFetcher.cs          (Firefox, headed, JS-rendered text)
     Search/       IWebSearch.cs, DuckDuckGoSearch.cs (keyless via fetcher), (future) BraveSearch.cs
+    Transcription/ ITranscriber.cs, WhisperTranscriber.cs (Whisper.net, local, keyless)
     Summarizers/  ClaudeSummarizer.cs, OllamaSummarizer.cs, PassthroughSummarizer.cs ("none")
     Delivery/     MarkdownFileDelivery.cs, ConsoleDelivery.cs, EmailDelivery.cs
 /tests
@@ -207,7 +211,12 @@ README.md
     { "type": "googleCalendar", "heading": "Calendar", "order": 7, "summarizer": "none",
       "timeoutSeconds": 30,
       "settings": { "icalUrlEnv": "GCAL_ICAL_URL", "views": ["today", "week"],
-                    "weekDays": 7, "timezone": "America/New_York" } }
+                    "weekDays": 7, "timezone": "America/New_York" } },
+
+    { "type": "podcast", "heading": "Podcasts", "order": 8, "summarizer": "claude",
+      "timeoutSeconds": 1800,
+      "settings": { "feeds": ["https://feeds.simplecast.com/xxxx"], "maxEpisodesPerFeed": 1,
+                    "since": "3d", "transcriber": "whisper", "model": "base", "maxAudioMinutes": 90 } }
   ]
 }
 ```
@@ -241,7 +250,7 @@ https://api.open-meteo.com/v1/forecast
 Sections are **data, not code**. Each `sections[]` entry binds to a `SectionConfig`:
 
 ```csharp
-public enum SectionType { Weather, Web, Rss, Sql, GoogleCalendar, Question, Email /* add a case per new type */ }
+public enum SectionType { Weather, Web, Rss, Podcast, Sql, GoogleCalendar, Question, Email /* add a case per new type */ }
 
 public record SectionConfig(
     SectionType Type, string Heading, int Order, string Summarizer,
@@ -370,6 +379,52 @@ Flow in `RssGatherer` (concurrent producer):
 
 Fold: per feed (by `SubHeading`) → one digest per feed; renders `### {feed title}` +
 digest. A dead feed degrades to "section unavailable" and the others proceed.
+
+> **Reddit is just RSS** — no new type. Use `rss` with Reddit's feed URLs:
+> `…/r/<sub>/.rss`, `…/r/<sub>/top/.rss?t=day`, or `…/search.rss?q=<query>`.
+> (Score/comment filtering would need Reddit's JSON API; not worth a type for a digest.)
+
+### Podcasts — RSS + audio transcription (local Whisper)
+
+A `podcast` section summarizes what was actually **said** in recent episodes. It's
+the one type with a transcription stage, which is why it's separate from `rss`
+(which only sees show notes). Pipeline: read feed → download audio → **transcribe**
+→ summarize the transcript.
+
+Transcription is **local and keyless** by default — `Whisper.net` (whisper.cpp
+bindings) on CPU, behind an `ITranscriber` seam (a cloud STT can drop in later).
+Same spirit as Ollama: no API key, no cost.
+
+```jsonc
+{ "type": "podcast", "heading": "Podcasts", "order": 8, "summarizer": "claude",
+  "timeoutSeconds": 1800,            // transcription is slow — generous budget
+  "settings": {
+    "feeds": ["https://feeds.simplecast.com/xxxx"],
+    "maxEpisodesPerFeed": 1,         // newest only by default — transcription is expensive
+    "since": "3d",
+    "transcriber": "whisper",        // local whisper.cpp via Whisper.net (keyless)
+    "model": "base",                 // whisper model: tiny | base | small | medium
+    "maxAudioMinutes": 90            // skip/truncate over-long episodes
+  } }
+```
+
+Flow in `PodcastGatherer` (concurrent producer; **transcribes episodes serially
+inside the gatherer** to avoid pegging all CPU at once):
+1. Read the feed (`SyndicationFeed`) → newest episodes' `<enclosure>` audio URLs +
+   titles, filtered by `since`, capped at `maxEpisodesPerFeed`.
+2. Download the audio (`HttpClient` stream), cap by `maxAudioMinutes`.
+3. Decode to 16 kHz mono WAV via **ffmpeg** (mp3/m4a → what whisper expects), then
+   `ITranscriber.TranscribeAsync` → transcript text.
+4. Emit one `RawPiece` per episode, `SubHeading = "{podcast} — {episode}"`.
+
+Then the normal two-level summarize: chunk-summarize each (long) transcript →
+episode summary; fold per episode → one entry each, rendered `### {podcast — episode}`.
+
+**Cost/perf caveat (called out, not hidden):** local Whisper is CPU-heavy and roughly
+real-time-ish — a 60-min episode can take many minutes, and it competes with a local
+Ollama for CPU. Hence `maxEpisodesPerFeed: 1` default, generous `timeoutSeconds`, and
+it's a background 6am batch. Heavy users should pair it with a cloud summarizer or a
+smaller whisper `model`. Docker adds **ffmpeg + the whisper model** to the image.
 
 ### Google Calendar — secret iCal URL (no OAuth), today + week views
 
@@ -630,9 +685,9 @@ to use.
 2. **Core abstractions & models** — `ISectionGatherer`, `ISummarizer`, `IPageFetcher`, `IDeliveryChannel`, `ISummaryRenderer`; `SectionType` enum, `SectionConfig`, `RawPiece`, `DailySummary`/`SummarySection`/`RenderedSummary`; `Constants/Prompts.cs` (default per type) + `SummarizationLimits.cs`; `Summarization/` (`SummarizeFunc` + `TextChunker` + `ChunkedSummarizer` + `SectionSummarizers`).
 3. **Config** — `AppConfig` (`sections[]`, `concurrency`, `channelCapacity`, `browser`, `delivery`), `app.json` binding + validation; per-type `Settings` bound via `JsonElement`.
 4. **Pipeline + registry** — `SectionGathererRegistry` (enum→gatherer); `GatherSummarizePipeline` (bounded Channel: concurrent producers → serial consumer + section fold); `SummaryOrchestrator` iterating `sections[]`.
-5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `RssGatherer` (HttpClient + `SyndicationFeed`, no browser); `SqlGatherer`; `GoogleCalendarGatherer` (secret iCal URL + Ical.Net, today/week views); `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `EmailGatherer` (Gmail IMAP via MailKit, app password); `ClaudeSummarizer` + `OllamaSummarizer` + `PassthroughSummarizer` ("none"); `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
+5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `RssGatherer` (HttpClient + `SyndicationFeed`, no browser); `PodcastGatherer` (RSS + ffmpeg + `ITranscriber`/`WhisperTranscriber`, local); `SqlGatherer`; `GoogleCalendarGatherer` (secret iCal URL + Ical.Net, today/week views); `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `EmailGatherer` (Gmail IMAP via MailKit, app password); `ClaudeSummarizer` + `OllamaSummarizer` + `PassthroughSummarizer` ("none"); `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
 6. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI registering every `ISectionGatherer` (→ registry) + selecting summarizer/delivery from `app.json`.
-7. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Firefox + Xvfb + OS deps** (`playwright install --with-deps firefox`, `xvfb`); run the host under `xvfb-run`; `docker-compose.yml` (function + optional `ollama` sidecar).
+7. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Firefox + Xvfb + OS deps** (`playwright install --with-deps firefox`, `xvfb`); run the host under `xvfb-run`. For the `podcast` type add **ffmpeg** + the **Whisper model** file (e.g. `ggml-base.bin`) baked into the image. `docker-compose.yml` (function + optional `ollama` sidecar).
 8. **Tests** — xUnit: pipeline test (concurrent gather + serial summarize + section fold + ordering) with a fake gatherer/summarizer; failure/timeout → "unavailable"; renderer Markdown/HTML/triple asserts; config + `Settings` binding.
 9. **README** — `app.json` sections model, run locally (`func start` / `docker compose up`), deploy to Azure.
 
@@ -646,11 +701,13 @@ to use.
 - **Email section:** with `GMAIL_APP_PASSWORD` set, an `email` section connects to Gmail IMAP, pulls today's/unread messages (capped), and renders one inbox digest; a bad/missing password degrades to "section unavailable", not a crash.
 - **RSS section:** an `rss` section with 2 feeds — confirm XML parsing (no browser launched for it), per-feed `### {feed title}` digests, `since`/`maxItemsPerFeed` honored, and a dead feed degrades without sinking the others.
 - **Google Calendar section:** with `GCAL_ICAL_URL` set, a `googleCalendar` section with `views: ["today","week"]` and `summarizer: "none"` — confirm today's events list, the next 7 days grouped under `### {date}` headers in chronological order, recurring events expanded, and verbatim times (no LLM drift).
+- **Podcast section:** a `podcast` feed with `maxEpisodesPerFeed: 1`, whisper `model: tiny` for speed — confirm the newest episode downloads, transcribes locally (no key), and summarizes; a too-long/failed download degrades to "section unavailable". (Heavy — run as an isolated check, not in the fast unit suite.)
 - **Claude path (optional):** set `ANTHROPIC_API_KEY`, switch a section's summarizer to `claude`, re-trigger, confirm a real summary.
 
 ## 9. Out of scope (future)
 
-- New section *types* beyond Weather/Web/Rss/Sql/GoogleCalendar/Question/Email — e.g. Reddit, podcasts. The model supports them; each is one `ISectionGatherer` + enum case + registration when wanted.
+- New section *types* beyond Weather/Web/Rss/Podcast/Sql/GoogleCalendar/Question/Email. The model supports them; each is one `ISectionGatherer` + enum case + registration when wanted. (Reddit needs none — it's `rss`.)
+- **Cloud speech-to-text** (OpenAI Whisper API, etc.) behind `ITranscriber`; local Whisper.net (keyless) ships first for the `podcast` type.
 - **Outlook / Microsoft Graph** email and Gmail **OAuth2 (XOAUTH2)** — same `EmailGatherer` interface; Gmail IMAP + app password ships first to avoid the OAuth flow.
 - **Google Calendar API (OAuth2)** and **Google Tasks** — same `GoogleCalendarGatherer` interface; secret iCal URL (events only, no OAuth) ships first.
 - Keyed search backends for `question` sections (Brave/Google CSE) behind `IWebSearch`; DuckDuckGo (keyless) ships first.
