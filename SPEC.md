@@ -17,7 +17,8 @@ the orchestrator dispatches by that type to a gatherer. Ship-day types:
 1. **Weather** — Open-Meteo for the day (location in the section's `settings`).
 2. **Web** — fetch configured sites (Playwright/Firefox) and have an LLM summarize
    them. Used for news, misc updates, changelogs — any number of `web` sections.
-3. **Sql / GoogleCalendar** — pull today's events/tasks into a to-do list.
+3. **Sql / GoogleCalendar** — pull today's events/tasks into a to-do list. Calendar
+   (secret iCal URL, no OAuth) supports **today** and **week** (per-day) views.
 4. **Question** — answer free-form questions ("search for X", "what's the forecast
    in Y?") by web-searching, fetching the top results, and having the LLM answer
    from them. Questions are a JSON array in the section's `settings`.
@@ -129,12 +130,12 @@ rather than aborting the run.
   DailySummary.Providers/          ← concrete implementations
     Gatherers/    WeatherGatherer.cs (Open-Meteo), WebGatherer.cs (IPageFetcher),
                   RssGatherer.cs (HttpClient + SyndicationFeed, no browser),
-                  SqlGatherer.cs, GoogleCalendarGatherer.cs, QuestionGatherer.cs,
-                  EmailGatherer.cs (Gmail IMAP via MailKit)
+                  SqlGatherer.cs, GoogleCalendarGatherer.cs (secret iCal URL + Ical.Net),
+                  QuestionGatherer.cs, EmailGatherer.cs (Gmail IMAP via MailKit)
                   — each declares its SectionType + binds its own `settings` JSON
     Fetching/     PlaywrightPageFetcher.cs          (Firefox, headed, JS-rendered text)
     Search/       IWebSearch.cs, DuckDuckGoSearch.cs (keyless via fetcher), (future) BraveSearch.cs
-    Summarizers/  ClaudeSummarizer.cs, OllamaSummarizer.cs
+    Summarizers/  ClaudeSummarizer.cs, OllamaSummarizer.cs, PassthroughSummarizer.cs ("none")
     Delivery/     MarkdownFileDelivery.cs, ConsoleDelivery.cs, EmailDelivery.cs
 /tests
   DailySummary.Tests/              ← xUnit; orchestrator test with fakes for every interface
@@ -151,6 +152,7 @@ README.md
   "channelCapacity": 16,                            // bounded backpressure (~ fetch count)
   "browser": { "engine": "firefox", "headed": true }, // Firefox headed evades bot detection better than headless
   "summarizers": {
+    // a section's `"summarizer"` names one of these, or the built-in "none" (verbatim passthrough)
     "claude": { "model": "claude-haiku-4-5", "apiKeyEnv": "ANTHROPIC_API_KEY" },
     "ollama": { "endpoint": "http://ollama:11434", "model": "llama3.1" }
   },
@@ -200,7 +202,12 @@ README.md
     { "type": "rss", "heading": "Feeds", "order": 6, "summarizer": "ollama",
       "timeoutSeconds": 45,
       "settings": { "feeds": ["https://hnrss.org/frontpage", "https://www.theverge.com/rss/index.xml"],
-                    "maxItemsPerFeed": 10, "since": "1d", "fetchFullArticle": false } }
+                    "maxItemsPerFeed": 10, "since": "1d", "fetchFullArticle": false } },
+
+    { "type": "googleCalendar", "heading": "Calendar", "order": 7, "summarizer": "none",
+      "timeoutSeconds": 30,
+      "settings": { "icalUrlEnv": "GCAL_ICAL_URL", "views": ["today", "week"],
+                    "weekDays": 7, "timezone": "America/New_York" } }
   ]
 }
 ```
@@ -363,6 +370,43 @@ Flow in `RssGatherer` (concurrent producer):
 
 Fold: per feed (by `SubHeading`) → one digest per feed; renders `### {feed title}` +
 digest. A dead feed degrades to "section unavailable" and the others proceed.
+
+### Google Calendar — secret iCal URL (no OAuth), today + week views
+
+Google Calendar exposes a **"Secret address in iCal format"** — a private `.ics`
+URL fetchable **without OAuth** (the calendar parallel to Gmail's app password).
+`GoogleCalendarGatherer` GETs it with `HttpClient` and parses with **Ical.Net**
+(which expands recurring events). The secret URL lives in an env var.
+
+```jsonc
+{ "type": "googleCalendar", "heading": "Calendar", "order": 7, "summarizer": "none",
+  "timeoutSeconds": 30,
+  "settings": {
+    "icalUrlEnv": "GCAL_ICAL_URL",     // the secret .ics address, via env var
+    "views": ["today", "week"],        // either or both
+    "weekDays": 7,
+    "timezone": "America/New_York"
+  } }
+```
+
+Two views, each a sub-group rendered under its own `###` header:
+- **today** → events starting today, chronological. `SubHeading = "To do today"`.
+- **week** → events in the next `weekDays`, **grouped by day**; each day is a
+  `SubHeading` like `"Mon, Jun 30"` and renders as a `### Mon, Jun 30` header with
+  that day's events listed in chronological order.
+
+`GoogleCalendarGatherer` emits one `RawPiece` per group (today, then each upcoming
+day) with events **already sorted**; the per-`SubHeading` fold keeps them ordered, so
+the section reads "To do today" then each day in sequence.
+
+**Why `summarizer: "none"`.** Calendar data is factual — exact times must not drift.
+`"none"` is a **built-in passthrough summarizer** (no entry needed in `summarizers`)
+that emits the gathered text verbatim: no LLM call, no risk of altered times. Point
+it at a real summarizer if you'd rather have it prose-ified.
+
+> Scope: this covers calendar **events**. Google **Tasks** (the separate to-do
+> product) needs the Tasks API/OAuth — out of scope; use a `sql` section for tasks
+> meanwhile.
 
 ### Email (Gmail) — IMAP + app password, no OAuth
 
@@ -586,7 +630,7 @@ to use.
 2. **Core abstractions & models** — `ISectionGatherer`, `ISummarizer`, `IPageFetcher`, `IDeliveryChannel`, `ISummaryRenderer`; `SectionType` enum, `SectionConfig`, `RawPiece`, `DailySummary`/`SummarySection`/`RenderedSummary`; `Constants/Prompts.cs` (default per type) + `SummarizationLimits.cs`; `Summarization/` (`SummarizeFunc` + `TextChunker` + `ChunkedSummarizer` + `SectionSummarizers`).
 3. **Config** — `AppConfig` (`sections[]`, `concurrency`, `channelCapacity`, `browser`, `delivery`), `app.json` binding + validation; per-type `Settings` bound via `JsonElement`.
 4. **Pipeline + registry** — `SectionGathererRegistry` (enum→gatherer); `GatherSummarizePipeline` (bounded Channel: concurrent producers → serial consumer + section fold); `SummaryOrchestrator` iterating `sections[]`.
-5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `RssGatherer` (HttpClient + `SyndicationFeed`, no browser); `SqlGatherer`; `GoogleCalendarGatherer` stub; `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `EmailGatherer` (Gmail IMAP via MailKit, app password); `ClaudeSummarizer` + `OllamaSummarizer`; `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
+5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `RssGatherer` (HttpClient + `SyndicationFeed`, no browser); `SqlGatherer`; `GoogleCalendarGatherer` (secret iCal URL + Ical.Net, today/week views); `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `EmailGatherer` (Gmail IMAP via MailKit, app password); `ClaudeSummarizer` + `OllamaSummarizer` + `PassthroughSummarizer` ("none"); `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
 6. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI registering every `ISectionGatherer` (→ registry) + selecting summarizer/delivery from `app.json`.
 7. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Firefox + Xvfb + OS deps** (`playwright install --with-deps firefox`, `xvfb`); run the host under `xvfb-run`; `docker-compose.yml` (function + optional `ollama` sidecar).
 8. **Tests** — xUnit: pipeline test (concurrent gather + serial summarize + section fold + ordering) with a fake gatherer/summarizer; failure/timeout → "unavailable"; renderer Markdown/HTML/triple asserts; config + `Settings` binding.
@@ -601,12 +645,14 @@ to use.
 - **Question section:** a `question` section with 2–3 questions — confirm each is searched (DuckDuckGo, keyless), top results fetched, and rendered as `### {question}` + an answer; a question with no usable results renders "couldn't answer from sources" rather than failing the run.
 - **Email section:** with `GMAIL_APP_PASSWORD` set, an `email` section connects to Gmail IMAP, pulls today's/unread messages (capped), and renders one inbox digest; a bad/missing password degrades to "section unavailable", not a crash.
 - **RSS section:** an `rss` section with 2 feeds — confirm XML parsing (no browser launched for it), per-feed `### {feed title}` digests, `since`/`maxItemsPerFeed` honored, and a dead feed degrades without sinking the others.
+- **Google Calendar section:** with `GCAL_ICAL_URL` set, a `googleCalendar` section with `views: ["today","week"]` and `summarizer: "none"` — confirm today's events list, the next 7 days grouped under `### {date}` headers in chronological order, recurring events expanded, and verbatim times (no LLM drift).
 - **Claude path (optional):** set `ANTHROPIC_API_KEY`, switch a section's summarizer to `claude`, re-trigger, confirm a real summary.
 
 ## 9. Out of scope (future)
 
 - New section *types* beyond Weather/Web/Rss/Sql/GoogleCalendar/Question/Email — e.g. Reddit, podcasts. The model supports them; each is one `ISectionGatherer` + enum case + registration when wanted.
 - **Outlook / Microsoft Graph** email and Gmail **OAuth2 (XOAUTH2)** — same `EmailGatherer` interface; Gmail IMAP + app password ships first to avoid the OAuth flow.
+- **Google Calendar API (OAuth2)** and **Google Tasks** — same `GoogleCalendarGatherer` interface; secret iCal URL (events only, no OAuth) ships first.
 - Keyed search backends for `question` sections (Brave/Google CSE) behind `IWebSearch`; DuckDuckGo (keyless) ships first.
 - Slack / Teams / Discord delivery channels (interface ready; email + markdown + console ship initially).
 - Real Google Calendar OAuth flow (stub only initially).
