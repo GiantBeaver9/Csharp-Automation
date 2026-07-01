@@ -30,8 +30,11 @@ public sealed record SummaryEntry(string? SubHeading, string Body);
 /// <summary>A finished section of the newspaper: a heading plus one or more entries.</summary>
 public sealed record SummarySection(int Order, string Heading, IReadOnlyList<SummaryEntry> Entries);
 
-/// <summary>The assembled, format-agnostic document. The orchestrator builds this — no LLM pass over it.</summary>
-public sealed record DailySummary(string Title, IReadOnlyList<SummarySection> Sections);
+/// <summary>
+/// The assembled, format-agnostic document. The orchestrator builds this — no LLM pass over it.
+/// Named <c>DigestDocument</c> (not <c>DailySummary</c>) to avoid clashing with the root namespace.
+/// </summary>
+public sealed record DigestDocument(string Title, IReadOnlyList<SummarySection> Sections);
 
 /// <summary>The rendered "triple": subject + markdown + html. Each delivery channel pulls what it needs.</summary>
 public sealed record RenderedSummary(string Subject, string Markdown, string Html);

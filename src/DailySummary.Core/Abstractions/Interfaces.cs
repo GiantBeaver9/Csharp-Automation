@@ -38,10 +38,10 @@ public interface ITranscriber
     Task<string> TranscribeAsync(Stream audio, CancellationToken ct);
 }
 
-/// <summary>Turns the structured <see cref="DailySummary"/> into the rendered triple.</summary>
+/// <summary>Turns the structured <see cref="DigestDocument"/> into the rendered triple.</summary>
 public interface ISummaryRenderer
 {
-    RenderedSummary Render(DailySummary summary);
+    RenderedSummary Render(DigestDocument summary);
 }
 
 /// <summary>Delivers a rendered digest (markdown file, console, email, …).</summary>

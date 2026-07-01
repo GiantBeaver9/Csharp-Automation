@@ -16,8 +16,10 @@
     <PackageReference Include="System.ServiceModel.Syndication" Version="8.0.0" />
     <!-- Headed Firefox page capture -->
     <PackageReference Include="Microsoft.Playwright" Version="1.47.0" />
-    <!-- Gmail IMAP (app password, no OAuth) -->
-    <PackageReference Include="MailKit" Version="4.7.1.1" />
+    <!-- Gmail IMAP (app password, no OAuth). Pinned current to avoid the vulnerability in older
+         MailKit/MimeKit; MimeKit is referenced explicitly so its version is controlled, not transitive. -->
+    <PackageReference Include="MailKit" Version="4.13.0" />
+    <PackageReference Include="MimeKit" Version="4.13.0" />
     <!-- Google Calendar secret iCal parsing -->
     <PackageReference Include="Ical.Net" Version="4.2.0" />
     <!-- Local Whisper transcription for podcasts -->

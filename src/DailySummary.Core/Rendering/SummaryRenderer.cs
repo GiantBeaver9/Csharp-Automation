@@ -4,18 +4,18 @@ using DailySummary.Core.Models;
 namespace DailySummary.Core.Rendering;
 
 /// <summary>
-/// Walks the structured <see cref="DailySummary"/> and produces the rendered triple
+/// Walks the structured <see cref="DigestDocument"/> and produces the rendered triple
 /// (subject + markdown + html) via the <see cref="FormatSection"/> delegate.
 /// No LLM pass — pure assembly.
 /// </summary>
 public sealed class SummaryRenderer : ISummaryRenderer
 {
-    public RenderedSummary Render(DailySummary summary) => new(
+    public RenderedSummary Render(DigestDocument summary) => new(
         Subject: summary.Title,
         Markdown: RenderWith(summary, SectionFormats.Markdown, title => $"# {title}\n"),
         Html: RenderWith(summary, SectionFormats.Html, title => $"<h1>{System.Net.WebUtility.HtmlEncode(title)}</h1>"));
 
-    private static string RenderWith(DailySummary summary, FormatSection fmt, Func<string, string> title)
+    private static string RenderWith(DigestDocument summary, FormatSection fmt, Func<string, string> title)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine(title(summary.Title));

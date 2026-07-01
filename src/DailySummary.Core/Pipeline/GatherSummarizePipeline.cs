@@ -8,7 +8,7 @@ namespace DailySummary.Core.Pipeline;
 /// <summary>
 /// Bounded-channel producer→consumer: concurrent gatherers write <see cref="RawPiece"/>s;
 /// a single (or few) LLM consumer lanes summarize each as it arrives; results fold per
-/// (section, sub-heading) into the structured <see cref="DailySummary"/>.
+/// (section, sub-heading) into the structured <see cref="DigestDocument"/>.
 /// </summary>
 public sealed class GatherSummarizePipeline
 {
@@ -31,7 +31,7 @@ public sealed class GatherSummarizePipeline
 
     private sealed record PieceResult(int Order, string Heading, string? Sub, string Body, bool Failed);
 
-    public async Task<DailySummary> RunAsync(DigestConfig digest, AppConfig app, CancellationToken ct)
+    public async Task<DigestDocument> RunAsync(DigestConfig digest, AppConfig app, CancellationToken ct)
     {
         var sections = digest.Sections;
         var byOrder = sections.GroupBy(s => s.Order).ToDictionary(g => g.Key, g => g.First());
@@ -120,7 +120,7 @@ public sealed class GatherSummarizePipeline
         }
 
         var title = $"Daily Brief — {DateTimeOffset.UtcNow:ddd, MMM d, yyyy}";
-        return new DailySummary(title, summarySections);
+        return new DigestDocument(title, summarySections);
     }
 
     private async Task<string> FoldAsync(SectionConfig cfg, string? sub, List<PieceResult> group, CancellationToken ct)

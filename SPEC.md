@@ -129,7 +129,7 @@ rather than aborting the run.
                                      ISectionGatherer, IDeliveryChannel, ISummaryRenderer
     Constants/                     ← Prompts.cs (default prompt per type), SummarizationLimits.cs
     Models/                        ← AppConfig, SectionConfig, SectionType (enum),
-                                     DailySummary, SummarySection, RenderedSummary,
+                                     DigestDocument, SummarySection, RenderedSummary,
                                      RawPiece, GatherResult, TodoItem, WeatherReport, PageContent
     Pipeline/                      ← GatherSummarizePipeline.cs (bounded Channel producer→consumer),
                                      SectionGathererRegistry.cs (SectionType → ISectionGatherer)
@@ -709,7 +709,8 @@ depending on the delivery channel.
 **Model** (`Models/`)
 ```csharp
 public record SummarySection(string Heading, string Body);   // Body = markdown text from the LLM
-public record DailySummary(string Title, IReadOnlyList<SummarySection> Sections);
+// Named DigestDocument (not DailySummary) so the type never collides with the root namespace.
+public record DigestDocument(string Title, IReadOnlyList<SummarySection> Sections);
 public record RenderedSummary(string Subject, string Markdown, string Html); // the "triple"
 ```
 
@@ -728,12 +729,12 @@ static class SectionFormats
 }
 ```
 
-**`SummaryRenderer`** walks `DailySummary.Sections`, applies the chosen
+**`SummaryRenderer`** walks `DigestDocument.Sections`, applies the chosen
 `FormatSection` delegate, and prepends the title (`# …` for Markdown, `<h1>…` for
 HTML). It exposes both representations and packages them as the triple:
 
 ```csharp
-public RenderedSummary Render(DailySummary s) => new(
+public RenderedSummary Render(DigestDocument s) => new(
     Subject:  s.Title,                                  // email subject / file title
     Markdown: RenderWith(s, SectionFormats.Markdown),   // file + console
     Html:     RenderWith(s, SectionFormats.Html));      // email body
@@ -762,7 +763,7 @@ to use.
 ## 7. Build steps (when we implement)
 
 1. **Solution scaffold** — `DailySummary.sln` (Functions + Core + Providers + test); .NET 8 isolated worker.
-2. **Core abstractions & models** — `ISectionGatherer`, `ISummarizer`, `IPageFetcher`, `IDeliveryChannel`, `ISummaryRenderer`; `SectionType` enum, `SectionConfig`, `RawPiece`, `DailySummary`/`SummarySection`/`RenderedSummary`; `Constants/Prompts.cs` (default per type) + `SummarizationLimits.cs`; `Summarization/` (`SummarizeFunc` + `TextChunker` + `ChunkedSummarizer` + `SectionSummarizers`).
+2. **Core abstractions & models** — `ISectionGatherer`, `ISummarizer`, `IPageFetcher`, `IDeliveryChannel`, `ISummaryRenderer`; `SectionType` enum, `SectionConfig`, `RawPiece`, `DigestDocument`/`SummarySection`/`RenderedSummary`; `Constants/Prompts.cs` (default per type) + `SummarizationLimits.cs`; `Summarization/` (`SummarizeFunc` + `TextChunker` + `ChunkedSummarizer` + `SectionSummarizers`).
 3. **Config** — `AppConfig` (`concurrency`, `channelCapacity`, `browser`, `summarizers`, `digests[]`); each digest `{ name, schedule, delivery, sections[] }`; `app.json` binding + validation; per-type `Settings` bound via `JsonElement`.
 4. **Pipeline + registry** — `SectionGathererRegistry` (enum→gatherer); `GatherSummarizePipeline` (bounded Channel: concurrent producers → serial consumer + section fold); `SummaryOrchestrator.RunAsync(digestName)` iterating that digest's `sections[]`.
 5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `RssGatherer` (HttpClient + `SyndicationFeed`, no browser); `PodcastGatherer` (RSS + ffmpeg + `ITranscriber`/`WhisperTranscriber`, local); `SqlGatherer`; `GoogleCalendarGatherer` (secret iCal URL + Ical.Net, today/week views); `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `EmailGatherer` (Gmail IMAP via MailKit, app password); `PromptGatherer` (no-op gather; instruction for a tool/MCP-enabled LLM); `ClaudeSummarizer` + `OllamaSummarizer` + `PassthroughSummarizer` ("none"); `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
@@ -773,7 +774,7 @@ to use.
 
 ## 8. Verification
 
-- **Unit/integration:** `dotnet test` — `GatherSummarizePipeline` with a fake gatherer (emits N pieces, some that throw/time out) + fake summarizer: assert concurrent gather, serial summarize (consumer never overlaps), section fold, deterministic order, and that failures/timeouts render "unavailable". Renderer test asserts Markdown (`##`) + HTML (`<h2>`) of the same `DailySummary` and the email triple (subject/html/text). Config test binds a `sections[]` `app.json` incl. per-type `Settings`.
+- **Unit/integration:** `dotnet test` — `GatherSummarizePipeline` with a fake gatherer (emits N pieces, some that throw/time out) + fake summarizer: assert concurrent gather, serial summarize (consumer never overlaps), section fold, deterministic order, and that failures/timeouts render "unavailable". Renderer test asserts Markdown (`##`) + HTML (`<h2>`) of the same `DigestDocument` and the email triple (subject/html/text). Config test binds a `sections[]` `app.json` incl. per-type `Settings`.
 - **Local run (no cloud):** a `morning` digest with `delivery.channel = "console"`, a `weather` section (Open-Meteo, no key) + a `web` section, summarizer = `ollama` (or a `fake` for offline). Real Firefox (headed) fetch hits the sites. Trigger via the admin endpoint (`POST http://localhost:7071/admin/functions/MorningDigestFunction`) and confirm a rendered newspaper in console / `./out/*.md`.
 - **Evening digest / prompt section:** trigger `EveningDigestFunction`; with an MCP-enabled Ollama, an `enumerate` `prompt` section lists today's commits/PRs then summarizes each one-by-one — assert one LLM call per item (bounded context, not one giant call) and a clean bullet-list fold (no re-blend). With a no-tools model, `single` prompts still return without erroring.
 - **Docker:** `docker compose up` (Firefox runs under Xvfb), same trigger, confirm output inside the container.

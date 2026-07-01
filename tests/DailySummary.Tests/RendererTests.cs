@@ -6,7 +6,7 @@ namespace DailySummary.Tests;
 
 public class RendererTests
 {
-    private static DailySummary Sample() => new(
+    private static DigestDocument Sample() => new(
         "Daily Brief — Test",
         new[]
         {
