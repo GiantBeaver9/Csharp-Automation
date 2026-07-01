@@ -14,6 +14,9 @@ artifacts/
 .idea/
 .vs/
 
+# Digest output
+out/
+
 # OS
 .DS_Store
 Thumbs.db

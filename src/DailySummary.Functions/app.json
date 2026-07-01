@@ -1,0 +1,61 @@
+{
+  // Shared infrastructure is top-level; each scheduled run is a digest.
+  "concurrency": { "fetch": 7, "summarize": 1 },
+  "channelCapacity": 16,
+  "browser": { "engine": "firefox", "headed": true },
+
+  "summarizers": {
+    "claude": { "model": "claude-haiku-4-5", "apiKeyEnv": "ANTHROPIC_API_KEY" },
+    "ollama": { "endpoint": "http://localhost:11434", "model": "llama3.1" }
+  },
+
+  "digests": [
+    {
+      "name": "morning",
+      "schedule": "0 0 6 * * *",
+      "delivery": { "channel": "markdown", "outputDir": "./out" },
+      "sections": [
+        {
+          "type": "weather", "heading": "Weather", "order": 0, "summarizer": "ollama",
+          "timeoutSeconds": 30,
+          "settings": { "latitude": 40.71, "longitude": -74.01, "units": "imperial" }
+        },
+        {
+          "type": "rss", "heading": "Feeds", "order": 1, "summarizer": "ollama",
+          "timeoutSeconds": 45,
+          "settings": { "feeds": ["https://hnrss.org/frontpage"], "maxItemsPerFeed": 10, "since": "1d" }
+        },
+        {
+          "type": "googleCalendar", "heading": "Calendar", "order": 2, "summarizer": "none",
+          "timeoutSeconds": 30,
+          "settings": { "icalUrlEnv": "GCAL_ICAL_URL", "views": ["today", "week"], "weekDays": 7 }
+        },
+        {
+          "type": "prompt", "heading": "Yesterday's Commits & PRs", "order": 3, "summarizer": "ollama",
+          "timeoutSeconds": 300,
+          "settings": {
+            "mode": "enumerate",
+            "listPrompt": "Using your GitHub tools, LIST every commit and PR from yesterday for giantbeaver9/csharp-automation, one identifier per line. Do NOT summarize.",
+            "itemPrompt": "Summarize this single commit/PR in 1-2 lines:\n{item}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "evening",
+      "schedule": "0 0 22 * * *",
+      "delivery": { "channel": "console" },
+      "sections": [
+        {
+          "type": "prompt", "heading": "Today's Commits & PRs", "order": 0, "summarizer": "ollama",
+          "timeoutSeconds": 300,
+          "settings": {
+            "mode": "enumerate",
+            "listPrompt": "Using your GitHub tools, LIST every commit and PR from today for giantbeaver9/csharp-automation, one identifier per line. Do NOT summarize.",
+            "itemPrompt": "Summarize this single commit/PR in 1-2 lines:\n{item}"
+          }
+        }
+      ]
+    }
+  ]
+}

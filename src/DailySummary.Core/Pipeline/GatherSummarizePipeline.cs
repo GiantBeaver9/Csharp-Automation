@@ -130,8 +130,7 @@ public sealed class GatherSummarizePipeline
         if (bodies.Count == 1) return bodies[0];
 
         // Mechanical join for passthrough + prompt sections; LLM reduce for the rest.
-        if (_summarizerRegistry is not null &&
-            (SummarizerRegistry.IsPassthrough(cfg.Summarizer) || cfg.Type == SectionType.Prompt))
+        if (SummarizerRegistry.IsPassthrough(cfg.Summarizer) || cfg.Type == SectionType.Prompt)
             return string.Join("\n\n", bodies.Select(b => $"- {b}"));
 
         var pair = _summarizers.For(cfg, new RawPiece(cfg.Order, cfg.Heading, sub, sub, string.Empty));
