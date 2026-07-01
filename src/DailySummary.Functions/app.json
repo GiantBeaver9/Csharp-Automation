@@ -6,7 +6,10 @@
 
   "summarizers": {
     "claude": { "model": "claude-haiku-4-5", "apiKeyEnv": "ANTHROPIC_API_KEY" },
-    "ollama": { "endpoint": "http://localhost:11434", "model": "llama3.1" }
+    "ollama": { "endpoint": "http://localhost:11434", "model": "llama3.1" },
+    // OpenAI-compatible endpoint (LM Studio, llama.cpp server, vLLM, OpenAI).
+    // LM Studio: endpoint http://localhost:1234, model = the id shown in LM Studio's server tab.
+    "openai": { "endpoint": "http://localhost:1234", "model": "local-model" }
   },
 
   "digests": [
@@ -16,12 +19,12 @@
       "delivery": { "channel": "markdown", "outputDir": "./out" },
       "sections": [
         {
-          "type": "weather", "heading": "Weather", "order": 0, "summarizer": "ollama",
+          "type": "weather", "heading": "Weather", "order": 0, "summarizer": "openai",
           "timeoutSeconds": 30,
           "settings": { "latitude": 40.71, "longitude": -74.01, "units": "imperial" }
         },
         {
-          "type": "rss", "heading": "Feeds", "order": 1, "summarizer": "ollama",
+          "type": "rss", "heading": "Feeds", "order": 1, "summarizer": "openai",
           "timeoutSeconds": 45,
           "settings": { "feeds": ["https://hnrss.org/frontpage"], "maxItemsPerFeed": 10, "since": "1d" }
         },
@@ -31,7 +34,7 @@
           "settings": { "icalUrlEnv": "GCAL_ICAL_URL", "views": ["today", "week"], "weekDays": 7 }
         },
         {
-          "type": "prompt", "heading": "Yesterday's Commits & PRs", "order": 3, "summarizer": "ollama",
+          "type": "prompt", "heading": "Yesterday's Commits & PRs", "order": 3, "summarizer": "openai",
           "timeoutSeconds": 300,
           "settings": {
             "mode": "enumerate",
@@ -47,7 +50,7 @@
       "delivery": { "channel": "console" },
       "sections": [
         {
-          "type": "prompt", "heading": "Today's Commits & PRs", "order": 0, "summarizer": "ollama",
+          "type": "prompt", "heading": "Today's Commits & PRs", "order": 0, "summarizer": "openai",
           "timeoutSeconds": 300,
           "settings": {
             "mode": "enumerate",

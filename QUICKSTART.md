@@ -5,8 +5,8 @@ A config-driven "morning newspaper" orchestrator. Timer-triggered Azure Function
 calendar, email, questions, podcasts, and MCP prompt sections). Full design in
 [`SPEC.md`](./SPEC.md).
 
-> This is the redo (`DailySummary.sln`, under `src/`). The older
-> `AutomationFunctions` project is still present and can be removed once this is green.
+> The single solution is `DailySummary.sln` (projects under `src/` and `tests/`).
+> Regenerate it any time with `scripts/regen-sln.sh` (wraps `dotnet sln`).
 
 ## Layout
 
