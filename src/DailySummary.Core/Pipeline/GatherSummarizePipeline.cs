@@ -122,7 +122,7 @@ public sealed class GatherSummarizePipeline
         var label = string.IsNullOrWhiteSpace(digest.Name)
             ? "Daily"
             : char.ToUpperInvariant(digest.Name[0]) + digest.Name[1..];
-        var title = $"{label} Brief — {DateTimeOffset.UtcNow:ddd, MMM d, yyyy}";
+        var title = $"{label} Brief — {DateTime.Now:ddd, MMM d, yyyy}"; // local PC date/time
         return new DigestDocument(title, summarySections);
     }
 
