@@ -27,6 +27,15 @@ the orchestrator dispatches by that type to a gatherer. Ship-day types:
 6. **RSS** — digest RSS/Atom feeds (structured XML, no browser) into per-feed summaries.
    **Reddit** is just `rss` feed URLs — no separate type.
 7. **Podcast** — transcribe recent episodes (local Whisper) and summarize what was said.
+8. **Prompt** — hand an instruction to the tool/MCP-enabled local LLM and let it work
+   (e.g. "summarize today's commits & PRs" via the LLM's GitHub MCP — no gatherer code).
+   An `enumerate` mode lists items first, then summarizes each one-by-one to keep every
+   LLM call small (bounded context, clean per-item output).
+
+Runs are organized into **digests** (`digests[]`), each with its own schedule and
+delivery — e.g. a **6am newspaper** (Markdown) and a **10pm dev recap** (email). A
+section can appear in any digest, so the commit/PR summary lands in the evening recap
+and, if you like, the next morning's paper too.
 
 New section *instances* are pure JSON; new *types* (e.g. **Email**, RSS) are one
 small class each. Everything external (LLM, page fetch, gather source, delivery)
@@ -53,9 +62,9 @@ sits behind an interface selected via config, so the whole app runs locally with
 
 ```
 Azure Functions Host (Docker)
-  └─ DailySummaryFunction        ← [TimerTrigger(schedule from app.json)]  (06:00 daily)
-        └─ ISummaryOrchestrator.RunAsync()
-              foreach section in app.json `sections[]`  (data, not code):
+  └─ Morning/EveningDigestFunction  ← [TimerTrigger(schedule from app.json)]  (6am / 10pm)
+        └─ ISummaryOrchestrator.RunAsync(digestName)
+              foreach section in that digest's `sections[]`  (data, not code):
                  SectionGathererRegistry[section.Type]  → ISectionGatherer
               │
               │  GatherSummarizePipeline (bounded Channel):
@@ -79,7 +88,7 @@ and **failure-isolated** (per-item timeout → "section unavailable" note, run c
 
 ### Orchestration flow (`SummaryOrchestrator.RunAsync`)
 
-Driven by `app.json` `sections[]`; phases overlap via a bounded channel (§6).
+Driven by the running digest's `sections[]`; phases overlap via a bounded channel (§6).
 
 1. **Gather (concurrent producers)** — for each configured section, the registry
    resolves an `ISectionGatherer` by `SectionType`; gatherers run in parallel
@@ -109,7 +118,8 @@ rather than aborting the run.
 ```
 /src
   DailySummary.Functions/          ← Azure Functions host (isolated worker, .NET 8)
-    DailySummaryFunction.cs        ← TimerTrigger entry point
+    MorningDigestFunction.cs       ← TimerTrigger (6am) → orchestrator.RunAsync("morning")
+    EveningDigestFunction.cs       ← TimerTrigger (10pm) → orchestrator.RunAsync("evening")
     Program.cs                     ← host builder + DI registration
     Dockerfile                     ← mcr.microsoft.com/azure-functions/dotnet-isolated base
     host.json, local.settings.json
@@ -134,7 +144,8 @@ rather than aborting the run.
                   RssGatherer.cs (HttpClient + SyndicationFeed, no browser),
                   PodcastGatherer.cs (RSS + ffmpeg + ITranscriber),
                   SqlGatherer.cs, GoogleCalendarGatherer.cs (secret iCal URL + Ical.Net),
-                  QuestionGatherer.cs, EmailGatherer.cs (Gmail IMAP via MailKit)
+                  QuestionGatherer.cs, EmailGatherer.cs (Gmail IMAP via MailKit),
+                  PromptGatherer.cs (no-op gather; instruction for a tool/MCP-enabled LLM)
                   — each declares its SectionType + binds its own `settings` JSON
     Fetching/     PlaywrightPageFetcher.cs          (Firefox, headed, JS-rendered text)
     Search/       IWebSearch.cs, DuckDuckGoSearch.cs (keyless via fetcher), (future) BraveSearch.cs
@@ -149,9 +160,12 @@ README.md
 
 ## 5. Configuration (`app.json`)
 
+Shared infrastructure is top-level; **each scheduled run is a `digest`** with its
+own `schedule`, `delivery`, and `sections[]`. One timer function per digest calls
+`orchestrator.RunAsync(digestName)` — the same pipeline for all of them.
+
 ```jsonc
 {
-  "schedule": "0 0 6 * * *",
   "concurrency": { "fetch": 7, "summarize": 1 },   // fetch lanes; LLM lanes (keep 1 for local models)
   "channelCapacity": 16,                            // bounded backpressure (~ fetch count)
   "browser": { "engine": "firefox", "headed": true }, // Firefox headed evades bot detection better than headless
@@ -160,69 +174,78 @@ README.md
     "claude": { "model": "claude-haiku-4-5", "apiKeyEnv": "ANTHROPIC_API_KEY" },
     "ollama": { "endpoint": "http://ollama:11434", "model": "llama3.1" }
   },
-  "delivery": {
-    "channel": "markdown",            // "markdown" | "console" | "email"
-    "outputDir": "./out",             // markdown channel: writes {outputDir}/{yyyy-MM-dd}.md
-    "email": {                        // used only when channel == "email"
-      "to": "adamnash19@gmail.com", "from": "brief@example.com",
-      "smtpHost": "smtp.example.com", "smtpPort": 587,
-      "passwordEnv": "SMTP_PASSWORD"  // secret via env var, never in app.json
+
+  // Each digest = one scheduled run (its own timer function). Sections are data, not code:
+  // `type` → gatherer (SectionType enum → ISectionGatherer registry); `settings` = type-specific
+  // blob ("parse by json specs"); `prompt` optional (else Constants/Prompts.cs default per type).
+  "digests": [
+    {
+      "name": "morning",                            // 6am "newspaper"
+      "schedule": "0 0 6 * * *",
+      "delivery": { "channel": "markdown", "outputDir": "./out" },
+      "sections": [
+        { "type": "weather", "heading": "Weather", "order": 0, "summarizer": "ollama",
+          "timeoutSeconds": 30,
+          "settings": { "latitude": 40.71, "longitude": -74.01, "units": "imperial" } },
+
+        { "type": "web", "heading": "Headlines", "order": 1, "summarizer": "claude",
+          "timeoutSeconds": 60,
+          "settings": { "urls": ["https://news.ycombinator.com", "https://www.reuters.com"] } },
+
+        { "type": "rss", "heading": "Feeds", "order": 2, "summarizer": "ollama",
+          "timeoutSeconds": 45,
+          "settings": { "feeds": ["https://hnrss.org/frontpage"], "maxItemsPerFeed": 10,
+                        "since": "1d", "fetchFullArticle": false } },
+
+        { "type": "googleCalendar", "heading": "Calendar", "order": 3, "summarizer": "none",
+          "timeoutSeconds": 30,
+          "settings": { "icalUrlEnv": "GCAL_ICAL_URL", "views": ["today", "week"],
+                        "weekDays": 7, "timezone": "America/New_York" } },
+
+        { "type": "email", "heading": "Inbox", "order": 4, "summarizer": "claude",
+          "timeoutSeconds": 90,
+          "settings": { "imapHost": "imap.gmail.com", "imapPort": 993, "username": "you@gmail.com",
+                        "passwordEnv": "GMAIL_APP_PASSWORD", "mailbox": "INBOX",
+                        "unreadOnly": true, "since": "today", "maxMessages": 50 } },
+
+        { "type": "question", "heading": "Q&A", "order": 5, "summarizer": "claude",
+          "timeoutSeconds": 90,
+          "settings": { "engine": "duckduckgo", "resultsPerQuestion": 3,
+                        "questions": [ "search for recent .NET 9 news" ] } },
+
+        // "add it to the morning digest too": yesterday's dev activity, right here — pure JSON reuse.
+        // enumerate mode: LLM lists items, then each is summarized one-at-a-time (bounded context).
+        { "type": "prompt", "heading": "Yesterday's Commits & PRs", "order": 6, "summarizer": "ollama",
+          "timeoutSeconds": 300,
+          "settings": { "mode": "enumerate",
+                        "listPrompt": "Using your GitHub tools, LIST every commit and PR from yesterday for giantbeaver9/csharp-automation, one identifier per line. Do NOT summarize.",
+                        "itemPrompt": "Summarize this single commit/PR in 1–2 lines:\n{item}" } }
+      ]
+    },
+    {
+      "name": "evening",                            // 10pm dev recap
+      "schedule": "0 0 22 * * *",
+      "delivery": { "channel": "email",
+                    "email": { "to": "adamnash19@gmail.com", "from": "brief@example.com",
+                               "smtpHost": "smtp.example.com", "smtpPort": 587,
+                               "passwordEnv": "SMTP_PASSWORD" } },
+      "sections": [
+        // enumerate: LLM lists today's commits/PRs (via its GitHub MCP), then summarizes each one-by-one.
+        { "type": "prompt", "heading": "Today's Commits & PRs", "order": 0, "summarizer": "ollama",
+          "timeoutSeconds": 300,
+          "settings": { "mode": "enumerate",
+                        "listPrompt": "Using your GitHub tools, LIST every commit and PR from today for giantbeaver9/csharp-automation, one identifier per line. Do NOT summarize.",
+                        "itemPrompt": "Summarize this single commit/PR in 1–2 lines:\n{item}" } }
+      ]
     }
-  },
-
-  // Sections are data, not code. Add/remove/reorder by editing this array.
-  // `type` selects the gatherer (SectionType enum → ISectionGatherer registry).
-  // `settings` is a type-specific blob parsed by that gatherer ("parse by json specs").
-  // `prompt` is optional — omitted = default from Constants/Prompts.cs for that type.
-  "sections": [
-    { "type": "weather", "heading": "Weather", "order": 0, "summarizer": "ollama",
-      "timeoutSeconds": 30,
-      "settings": { "latitude": 40.71, "longitude": -74.01, "units": "imperial" } },
-
-    { "type": "web", "heading": "Headlines", "order": 1, "summarizer": "claude",
-      "timeoutSeconds": 60,
-      "settings": { "urls": ["https://news.ycombinator.com", "https://www.reuters.com"] } },
-
-    { "type": "web", "heading": "Site Updates", "order": 2, "summarizer": "ollama",
-      "timeoutSeconds": 60,
-      "settings": { "urls": ["https://example.com/changelog"] } },
-
-    { "type": "sql", "heading": "To-Dos", "order": 3, "summarizer": "ollama",
-      "timeoutSeconds": 30,
-      "settings": { "connectionStringEnv": "TODO_DB", "query": "SELECT title, due FROM tasks WHERE due::date = CURRENT_DATE" } },
-
-    { "type": "question", "heading": "Q&A", "order": 4, "summarizer": "claude",
-      "timeoutSeconds": 90,
-      "settings": { "engine": "duckduckgo", "resultsPerQuestion": 3,
-                    "questions": [ "What's the forecast for Tokyo this weekend?",
-                                   "search for recent .NET 9 news" ] } },
-
-    { "type": "email", "heading": "Inbox", "order": 5, "summarizer": "claude",
-      "timeoutSeconds": 90,
-      "settings": { "imapHost": "imap.gmail.com", "imapPort": 993, "username": "you@gmail.com",
-                    "passwordEnv": "GMAIL_APP_PASSWORD", "mailbox": "INBOX",
-                    "unreadOnly": true, "since": "today", "maxMessages": 50 } },
-
-    { "type": "rss", "heading": "Feeds", "order": 6, "summarizer": "ollama",
-      "timeoutSeconds": 45,
-      "settings": { "feeds": ["https://hnrss.org/frontpage", "https://www.theverge.com/rss/index.xml"],
-                    "maxItemsPerFeed": 10, "since": "1d", "fetchFullArticle": false } },
-
-    { "type": "googleCalendar", "heading": "Calendar", "order": 7, "summarizer": "none",
-      "timeoutSeconds": 30,
-      "settings": { "icalUrlEnv": "GCAL_ICAL_URL", "views": ["today", "week"],
-                    "weekDays": 7, "timezone": "America/New_York" } },
-
-    { "type": "podcast", "heading": "Podcasts", "order": 8, "summarizer": "claude",
-      "timeoutSeconds": 1800,
-      "settings": { "feeds": ["https://feeds.simplecast.com/xxxx"], "maxEpisodesPerFeed": 1,
-                    "since": "3d", "transcriber": "whisper", "model": "base", "maxAudioMinutes": 90 } }
   ]
 }
 ```
 
 Bound to a strongly-typed `AppConfig` via `IOptions<AppConfig>`. Secrets (API
-keys) come from **environment variables**, never committed in `app.json`.
+keys, tokens) come from **environment variables**, never committed in `app.json`.
+Delivery (`channel`/`outputDir`/`email`) is **per digest** — morning writes
+Markdown, evening emails.
 
 ## 6. Section internals (the parts that were open questions)
 
@@ -250,7 +273,7 @@ https://api.open-meteo.com/v1/forecast
 Sections are **data, not code**. Each `sections[]` entry binds to a `SectionConfig`:
 
 ```csharp
-public enum SectionType { Weather, Web, Rss, Podcast, Sql, GoogleCalendar, Question, Email /* add a case per new type */ }
+public enum SectionType { Weather, Web, Rss, Podcast, Sql, GoogleCalendar, Question, Email, Prompt /* add a case per new type */ }
 
 public record SectionConfig(
     SectionType Type, string Heading, int Order, string Summarizer,
@@ -495,6 +518,63 @@ Setup note: Gmail needs **2-Step Verification enabled** and an **App Password**
 generated; store it in `GMAIL_APP_PASSWORD`, never in `app.json`. (Outlook/Graph and
 full OAuth2 XOAUTH2 stay out of scope — same `ISectionGatherer`, added later.)
 
+### Prompt sections — ask the tool-enabled local LLM (MCP does the work)
+
+A `prompt` section is the "let the LLM do it" escape hatch: the configured summarizer
+is a **tool/MCP-enabled local LLM** that fetches and answers with its own tools. No
+custom gatherer, no SDK, no token plumbing on our side. Two modes:
+
+**`single`** (default) — one instruction → one answer. `PromptGatherer` emits a single
+`RawPiece` carrying the prompt as its `Instruction`.
+
+```jsonc
+{ "type": "prompt", "heading": "Note", "summarizer": "ollama",
+  "settings": { "prompt": "Using your GitHub tools, summarize today's open PRs for <owner>/<repo>." } }
+```
+
+**`enumerate`** (list-then-map) — for when one prompt would balloon (12 commits, 200k
+tokens, muddied together). Two phases, keeping every LLM call small:
+
+```jsonc
+{ "type": "prompt", "heading": "Today's Commits & PRs", "summarizer": "ollama",
+  "timeoutSeconds": 300,
+  "settings": {
+    "mode": "enumerate",
+    "listPrompt": "Using your GitHub tools, LIST every commit and PR from today for <owner>/<repo> as one identifier per line (sha or PR#, plus title). Do NOT summarize.",
+    "itemPrompt": "Summarize this single commit/PR in 1–2 lines:\n{item}"
+  } }
+```
+
+1. **List (once):** `PromptGatherer` runs `listPrompt` through the LLM → the LLM uses
+   its GitHub MCP to enumerate items → the gatherer splits the reply into lines and
+   **emits one `RawPiece` per item**, each with `itemPrompt` (`{item}` substituted)
+   as its `Instruction`. No summarizing yet — just the list.
+2. **Map (one at a time):** the pipeline's single LLM lane summarizes each item
+   independently — **one commit per call**, so context never accumulates and can't hit
+   200k. The LLM re-uses its MCP per item if it needs the diff.
+3. **Fold = mechanical list join:** the section's `Final` for `enumerate` is a plain
+   bullet-list assembly (passthrough), **not** an LLM re-combine — so 12 crisp one-liners
+   stay 12 crisp one-liners instead of being re-blended into mush.
+
+- The **dev recap** is `enumerate`: the local LLM already has a GitHub MCP, so no
+  Octokit, no `GITHUB_TOKEN`. The same list-then-map works for any MCP (list unread
+  mail → summarize each; list Jira tickets → summarize each).
+- Reuses the `Instruction` hook (question sections) and the per-`SubHeading`/section
+  fold — `enumerate` just makes the *gatherer* produce the item list via the LLM.
+- **Requires** the summarizer runtime to have MCP/tools wired up (your setup); a
+  no-tools model still answers `single` prompts from its own knowledge.
+
+### Digests & triggers — one timer function per scheduled run
+
+`app.json` `digests[]` — each digest has a `name`, `schedule`, `delivery`, and
+`sections[]`. Each maps to **one `TimerTrigger` function** whose CRON binds from
+config (`%...%` app-setting expression) and whose body is `orchestrator.RunAsync(name)`.
+Ship `MorningDigestFunction` (6am → Markdown) and `EveningDigestFunction` (10pm →
+email). Adding a section to a digest is pure JSON; adding a whole new *schedule* is one
+more thin timer function + a `digests[]` entry. The orchestrator, pipeline, gatherers,
+renderer, and delivery are identical across digests — a digest just selects sections +
+delivery + when.
+
 ### Concurrency pipeline — bounded Channel, fan-out fetch → single LLM lane
 
 `GatherSummarizePipeline` is a producer→consumer over `System.Threading.Channels`:
@@ -683,10 +763,10 @@ to use.
 
 1. **Solution scaffold** — `DailySummary.sln` (Functions + Core + Providers + test); .NET 8 isolated worker.
 2. **Core abstractions & models** — `ISectionGatherer`, `ISummarizer`, `IPageFetcher`, `IDeliveryChannel`, `ISummaryRenderer`; `SectionType` enum, `SectionConfig`, `RawPiece`, `DailySummary`/`SummarySection`/`RenderedSummary`; `Constants/Prompts.cs` (default per type) + `SummarizationLimits.cs`; `Summarization/` (`SummarizeFunc` + `TextChunker` + `ChunkedSummarizer` + `SectionSummarizers`).
-3. **Config** — `AppConfig` (`sections[]`, `concurrency`, `channelCapacity`, `browser`, `delivery`), `app.json` binding + validation; per-type `Settings` bound via `JsonElement`.
-4. **Pipeline + registry** — `SectionGathererRegistry` (enum→gatherer); `GatherSummarizePipeline` (bounded Channel: concurrent producers → serial consumer + section fold); `SummaryOrchestrator` iterating `sections[]`.
-5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `RssGatherer` (HttpClient + `SyndicationFeed`, no browser); `PodcastGatherer` (RSS + ffmpeg + `ITranscriber`/`WhisperTranscriber`, local); `SqlGatherer`; `GoogleCalendarGatherer` (secret iCal URL + Ical.Net, today/week views); `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `EmailGatherer` (Gmail IMAP via MailKit, app password); `ClaudeSummarizer` + `OllamaSummarizer` + `PassthroughSummarizer` ("none"); `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
-6. **Function host** — `DailySummaryFunction` TimerTrigger; `Program.cs` DI registering every `ISectionGatherer` (→ registry) + selecting summarizer/delivery from `app.json`.
+3. **Config** — `AppConfig` (`concurrency`, `channelCapacity`, `browser`, `summarizers`, `digests[]`); each digest `{ name, schedule, delivery, sections[] }`; `app.json` binding + validation; per-type `Settings` bound via `JsonElement`.
+4. **Pipeline + registry** — `SectionGathererRegistry` (enum→gatherer); `GatherSummarizePipeline` (bounded Channel: concurrent producers → serial consumer + section fold); `SummaryOrchestrator.RunAsync(digestName)` iterating that digest's `sections[]`.
+5. **Gatherers + adapters** — `WeatherGatherer` (Open-Meteo); `WebGatherer` over `PlaywrightPageFetcher` (**Firefox, headed**); `RssGatherer` (HttpClient + `SyndicationFeed`, no browser); `PodcastGatherer` (RSS + ffmpeg + `ITranscriber`/`WhisperTranscriber`, local); `SqlGatherer`; `GoogleCalendarGatherer` (secret iCal URL + Ical.Net, today/week views); `QuestionGatherer` over `IWebSearch`/`DuckDuckGoSearch` (keyless) + fetcher, with dynamic `Instruction` prompt; `EmailGatherer` (Gmail IMAP via MailKit, app password); `PromptGatherer` (no-op gather; instruction for a tool/MCP-enabled LLM); `ClaudeSummarizer` + `OllamaSummarizer` + `PassthroughSummarizer` ("none"); `SummaryRenderer` (Markdown + HTML triple); markdown/console/email delivery.
+6. **Function host** — one `TimerTrigger` per digest (`MorningDigestFunction`, `EveningDigestFunction`) → `orchestrator.RunAsync(name)`, schedule bound from config; `Program.cs` DI registering every `ISectionGatherer` (→ registry) + summarizers/delivery.
 7. **Dockerization** — `Dockerfile` on azure-functions dotnet-isolated base **plus Firefox + Xvfb + OS deps** (`playwright install --with-deps firefox`, `xvfb`); run the host under `xvfb-run`. For the `podcast` type add **ffmpeg** + the **Whisper model** file (e.g. `ggml-base.bin`) baked into the image. `docker-compose.yml` (function + optional `ollama` sidecar).
 8. **Tests** — xUnit: pipeline test (concurrent gather + serial summarize + section fold + ordering) with a fake gatherer/summarizer; failure/timeout → "unavailable"; renderer Markdown/HTML/triple asserts; config + `Settings` binding.
 9. **README** — `app.json` sections model, run locally (`func start` / `docker compose up`), deploy to Azure.
@@ -694,7 +774,8 @@ to use.
 ## 8. Verification
 
 - **Unit/integration:** `dotnet test` — `GatherSummarizePipeline` with a fake gatherer (emits N pieces, some that throw/time out) + fake summarizer: assert concurrent gather, serial summarize (consumer never overlaps), section fold, deterministic order, and that failures/timeouts render "unavailable". Renderer test asserts Markdown (`##`) + HTML (`<h2>`) of the same `DailySummary` and the email triple (subject/html/text). Config test binds a `sections[]` `app.json` incl. per-type `Settings`.
-- **Local run (no cloud):** `delivery.channel = "console"`, a `weather` section (Open-Meteo, no key) + a `web` section, summarizer = `ollama` (or a `fake` for offline). Real Firefox (headed) fetch hits the sites. Trigger via the admin endpoint (`POST http://localhost:7071/admin/functions/DailySummaryFunction`) and confirm a rendered newspaper in console / `./out/*.md`.
+- **Local run (no cloud):** a `morning` digest with `delivery.channel = "console"`, a `weather` section (Open-Meteo, no key) + a `web` section, summarizer = `ollama` (or a `fake` for offline). Real Firefox (headed) fetch hits the sites. Trigger via the admin endpoint (`POST http://localhost:7071/admin/functions/MorningDigestFunction`) and confirm a rendered newspaper in console / `./out/*.md`.
+- **Evening digest / prompt section:** trigger `EveningDigestFunction`; with an MCP-enabled Ollama, an `enumerate` `prompt` section lists today's commits/PRs then summarizes each one-by-one — assert one LLM call per item (bounded context, not one giant call) and a clean bullet-list fold (no re-blend). With a no-tools model, `single` prompts still return without erroring.
 - **Docker:** `docker compose up` (Firefox runs under Xvfb), same trigger, confirm output inside the container.
 - **Scale check:** a `web` section with a large `urls` list — confirm flat memory (bounded channel), serial LLM lane, and one folded section in the output.
 - **Question section:** a `question` section with 2–3 questions — confirm each is searched (DuckDuckGo, keyless), top results fetched, and rendered as `### {question}` + an answer; a question with no usable results renders "couldn't answer from sources" rather than failing the run.
