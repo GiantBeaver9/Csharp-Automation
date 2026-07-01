@@ -130,8 +130,97 @@ variant.
 6. Add activity **retry policies** (`TaskOptions` with `RetryPolicy`) — free resilience per section.
 7. Keep the timer/`Channel` version; gate which host runs via config or separate project.
 
+## Same pattern, different engine: Temporal
+
+This is the **durable execution** pattern, not a Microsoft-specific one. Temporal,
+AWS Step Functions, DBOS, and Restate all implement the same core idea: a
+**deterministic workflow replayed from an event-sourced history**, plus
+**activities** for the side-effectful work. Porting to Temporal is mostly renaming
+concepts — the `DailySummary.Core`/`Providers` code is untouched again; only the
+host layer differs.
+
+| Concept | Durable Functions | Temporal (.NET) |
+|---|---|---|
+| Coordination unit | Orchestrator function | **Workflow** (`[Workflow]`) |
+| Work unit | Activity function | **Activity** (`[Activity]`) |
+| Host | Functions host | **Worker** polling a **Task Queue** |
+| Schedule / trigger | Timer/HTTP starter | **Temporal Schedule** (built-in cron) |
+| Durable state | Azure Storage (history) | Temporal cluster + Postgres/Cassandra, or Temporal Cloud |
+| Determinism | replay; no wall-clock | replay; `Workflow.Now()`; versioning via `Workflow.Patched` |
+| Retries | `TaskOptions.RetryPolicy` | `ActivityOptions.RetryPolicy` (+ activity heartbeats) |
+| Timeouts | `functionTimeout` (plan-capped) | per-activity timeouts; workflows effectively **unbounded** |
+| Coupling | Azure-only | **portable** — any cloud or self-hosted |
+
+### Temporal .NET skeleton
+
+```csharp
+// WORKFLOW — deterministic, same rules as the Durable orchestrator
+[Workflow]
+public class DigestWorkflow
+{
+    [WorkflowRun]
+    public async Task RunAsync(string digestName)
+    {
+        var opts = new ActivityOptions { StartToCloseTimeout = TimeSpan.FromMinutes(30) };
+
+        var sections = await Workflow.ExecuteActivityAsync(
+            (Activities a) => a.LoadSectionsAsync(digestName), opts);
+
+        // FAN-OUT gather
+        var gather = sections.Select(s =>
+            Workflow.ExecuteActivityAsync((Activities a) => a.GatherSectionAsync(s), opts));
+        var pieces = (await Task.WhenAll(gather)).SelectMany(p => p).ToArray();
+
+        // SINGLE LLM LANE — sequential await
+        var summarized = new List<SummarizedPiece>();
+        foreach (var piece in pieces)
+            summarized.Add(await Workflow.ExecuteActivityAsync(
+                (Activities a) => a.SummarizePieceAsync(piece), opts));
+
+        var doc = FoldAndRender(digestName, summarized, Workflow.UtcNow); // deterministic time
+        await Workflow.ExecuteActivityAsync((Activities a) => a.DeliverAsync(digestName, doc), opts);
+    }
+}
+
+// ACTIVITIES — plain class, injected services, does the I/O (wraps the existing gatherers/summarizers)
+public class Activities
+{
+    [Activity] public Task<RawPiece[]> GatherSectionAsync(SectionConfig cfg) => ...;
+    [Activity] public Task<SummarizedPiece> SummarizePieceAsync(RawPiece p) => ...;
+    [Activity] public Task DeliverAsync(string digest, DigestDocument doc) => ...;
+}
+
+// HOST — a Worker (console / .NET Worker Service, lives happily in the Docker container)
+var client = await TemporalClient.ConnectAsync(new("localhost:7233"));
+using var worker = new TemporalWorker(client,
+    new TemporalWorkerOptions("digests").AddWorkflow<DigestWorkflow>().AddAllActivities(activities));
+await worker.ExecuteAsync();
+
+// SCHEDULE — replaces the timer trigger (create once)
+await client.CreateScheduleAsync("morning-digest",
+    new(Action: ScheduleActionStartWorkflow.Create((DigestWorkflow wf) => wf.RunAsync("morning"),
+        new("digests")),
+        Spec: new() { CronExpressions = new[] { "0 6 * * *" } }));
+```
+
+### What differs operationally
+
+- **Infra:** Temporal needs a running **cluster** — locally `temporal server start-dev`
+  (in-memory, one command); in prod a self-hosted cluster (Postgres/Cassandra) or
+  **Temporal Cloud**. Durable needs nothing beyond the Azure Storage you already use.
+  This is the main trade: more to operate, but cloud-agnostic and no timeout ceiling.
+- **Hosting shape:** the Worker is a normal long-running process, so the Temporal
+  version fits the **Docker worker** model (the hosting option passed on early) rather
+  than FaaS — and drops the function-timeout limit entirely.
+- **Richer primitives** if you grow into them: Signals/Queries (poke a running
+  workflow), Child Workflows, Continue-As-New (unbounded loops), and per-activity
+  `schedule-to-start` / `start-to-close` / heartbeat timeouts (a natural home for the
+  per-section `timeoutSeconds`).
+
 ## Résumé talking points this exercises
 
 Durable orchestration, fan-out/fan-in, deterministic replay, activity retry
-policies, external state/history in Azure Storage, and the trade-off between a
-streaming in-process pipeline and a durable staged one.
+policies, external state/history (Azure Storage **or** a Temporal cluster), the
+trade-off between a streaming in-process pipeline and a durable staged one, and —
+most valuably — recognizing durable execution as an **engine-agnostic pattern**
+(Durable Functions vs Temporal vs Step Functions) rather than a single product.
