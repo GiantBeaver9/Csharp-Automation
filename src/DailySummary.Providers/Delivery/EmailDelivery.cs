@@ -10,7 +10,7 @@ public sealed class EmailDelivery : IDeliveryChannel
 {
     public string Channel => "email";
 
-    public async Task DeliverAsync(RenderedSummary doc, DeliveryConfig config, CancellationToken ct)
+    public async Task DeliverAsync(RenderedSummary doc, DeliveryConfig config, string digestName, CancellationToken ct)
     {
         var cfg = config.Email
             ?? throw new InvalidOperationException("delivery.email must be set when channel is 'email'.");

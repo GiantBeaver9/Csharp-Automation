@@ -45,7 +45,7 @@ public sealed class SummaryOrchestrator : ISummaryOrchestrator
         {
             try
             {
-                await _delivery[name].DeliverAsync(rendered, digest.Delivery, ct).ConfigureAwait(false);
+                await _delivery[name].DeliverAsync(rendered, digest.Delivery, digest.Name, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

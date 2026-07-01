@@ -50,7 +50,7 @@ public interface IDeliveryChannel
     /// <summary>The channel name this handles (e.g. "markdown", "console", "email").</summary>
     string Channel { get; }
 
-    Task DeliverAsync(RenderedSummary doc, DeliveryConfig config, CancellationToken ct);
+    Task DeliverAsync(RenderedSummary doc, DeliveryConfig config, string digestName, CancellationToken ct);
 }
 
 /// <summary>Runs a named digest end to end: gather → summarize → render → deliver.</summary>

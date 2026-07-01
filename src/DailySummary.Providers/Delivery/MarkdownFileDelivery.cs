@@ -8,24 +8,30 @@ public sealed class MarkdownFileDelivery : IDeliveryChannel
 {
     public string Channel => "markdown";
 
-    public async Task DeliverAsync(RenderedSummary doc, DeliveryConfig config, CancellationToken ct)
+    public async Task DeliverAsync(RenderedSummary doc, DeliveryConfig config, string digestName, CancellationToken ct)
     {
         var dir = string.IsNullOrWhiteSpace(config.OutputDir) ? "./out" : config.OutputDir;
         Directory.CreateDirectory(dir); // creates the folder (and parents) if missing
-        // Filename derived from the subject (which includes the digest name + date), so the
-        // morning and evening digests don't overwrite each other.
-        var path = Path.Combine(dir, $"{Slug(doc.Subject)}.md");
+
+        // Name the file after the digest ("morning.md"); if it already exists, bump a
+        // numeric suffix ("morning-1.md", "morning-2.md", …) so nothing is overwritten.
+        var path = NextAvailablePath(dir, Slug(digestName));
         await File.WriteAllTextAsync(path, doc.Markdown, ct).ConfigureAwait(false);
         Console.WriteLine($"Wrote digest to {path}");
     }
 
+    private static string NextAvailablePath(string dir, string baseName)
+    {
+        var path = Path.Combine(dir, $"{baseName}.md");
+        for (var n = 1; File.Exists(path); n++)
+            path = Path.Combine(dir, $"{baseName}-{n}.md");
+        return path;
+    }
+
     private static string Slug(string text)
     {
-        var chars = text.ToLowerInvariant()
-            .Select(c => char.IsLetterOrDigit(c) ? c : '-')
-            .ToArray();
-        var slug = new string(chars);
+        var slug = new string(text.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray());
         while (slug.Contains("--")) slug = slug.Replace("--", "-");
-        return slug.Trim('-');
+        return slug.Trim('-') is { Length: > 0 } s ? s : "digest";
     }
 }
