@@ -217,6 +217,37 @@ await client.CreateScheduleAsync("morning-digest",
   `schedule-to-start` / `start-to-close` / heartbeat timeouts (a natural home for the
   per-section `timeoutSeconds`).
 
+### Payload limits — the sharpest Durable-vs-Temporal contrast
+
+Both engines persist and replay every activity input/output, so payloads want to be
+small. But they enforce it very differently:
+
+| | Durable Functions | Temporal |
+|---|---|---|
+| Per-payload limit | none hard — **auto-offloads large messages to Blob storage** above a threshold | **~2 MB** per payload (hard error), warn ~256 KB |
+| Transfer / message cap | governed by storage, transparent | **4 MB** max gRPC message |
+| History cap | Azure Storage backed | **50 MB / ~51K events** (replayed each step) |
+| Big-blob handling | transparent (it "just works") | **your responsibility** (explicit) |
+
+Where it bites this project: the **podcast transcript** (and large fetched pages). A
+long transcript easily exceeds 2 MB. If a `gather` activity *returns* it and a
+`summarize` activity *receives* it, on Temporal you blow the payload limit and bloat
+history; on Durable it silently blob-offloads. Mitigations (Temporal):
+
+1. **Keep big text inside one activity** — fuse fetch/transcribe + summarize per
+   source so only the *short summary* re-enters the workflow. (Best; the LLM exists
+   to turn big text into small text — do it before crossing the boundary.)
+2. **Claim-check / pass-by-reference** — gather writes the blob to storage, returns a
+   small handle; summarize reads it back. Or a custom **Payload Codec** that offloads
+   large payloads transparently (Temporal's equivalent of what Durable does for free).
+3. **Worker-level throttle** — Temporal's `MaxConcurrentActivities = 1` on a dedicated
+   task queue gives the "single LLM lane" without a `Channel`.
+
+Takeaway: our architecture already leans right — summaries are small, only *raw*
+content is ever large, and it can be confined to a single activity. Durable is more
+forgiving (auto-offload); Temporal makes you explicit, which is arguably better
+engineering but more to build.
+
 ## Résumé talking points this exercises
 
 Durable orchestration, fan-out/fan-in, deterministic replay, activity retry
