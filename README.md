@@ -1,211 +1,60 @@
-# Csharp-Automation
+# Csharp-Automation — DailySummary
 
-A C# **Azure Functions** app (isolated worker, .NET 8) for personal automation on a
-cron schedule. One timer runs the whole pipeline:
+A C# **Azure Functions** app (isolated worker, .NET 8, Dockerized) that assembles a
+daily "morning newspaper" and delivers it. Timer-triggered digests are built from a
+**config-driven list of section types** — everything external sits behind an interface
+selected in `app.json`, so it runs locally with zero cloud credentials and each source
+upgrades to a real service independently.
 
-> **get weather → aviation weather (METAR/TAF) → summarize the websites you list →
-> scan your inbox (optional) → email yourself one digest.**
+- **Full design:** [`SPEC.md`](./SPEC.md)
+- **Build & run:** [`QUICKSTART.md`](./QUICKSTART.md)
 
-| Function | Trigger | What it does |
-| --- | --- | --- |
-| `DailyDigestTimer` | Daily 07:00 | Builds the digest (weather + aviation + website summaries + inbox summary) and emails it to you |
+## What it does
 
-It also has an HTTP twin so you can run it on demand without waiting for the clock:
+Each **digest** is one scheduled run (its own cron + delivery + sections). Ship config
+has a **6am newspaper** (Markdown) and a **10pm dev recap** (console/email). Sections are
+data, not code:
 
-| Endpoint | Runs |
+| Type | Source |
 | --- | --- |
-| `GET/POST /api/run/digest` | the full digest pipeline |
+| `weather` | Open-Meteo (free, no key) |
+| `web` | fetched pages via Playwright (Firefox, headed) → LLM summary |
+| `rss` | RSS/Atom feeds (structured XML, no browser); **Reddit** is just RSS URLs |
+| `podcast` | download audio → local Whisper transcription → summary *(stub)* |
+| `sql` | a to-do query *(stub)* |
+| `googleCalendar` | secret iCal URL (no OAuth), today + week views |
+| `question` | web-search → fetch top results → LLM answers from them |
+| `email` | Gmail IMAP + app password (no OAuth) → inbox digest |
+| `prompt` | hand an instruction to a tool/MCP-enabled LLM (`enumerate` mode lists items, then summarizes each one-by-one) |
 
-Under the hood it's composable building blocks — **keyless weather**, **aviation
-weather** (FAA/NOAA METAR/TAF by ICAO code), a **local LLM** summarizer, an **IMAP inbox
-scanner**, and **SMTP email** — assembled by `DigestService`.
-The digest *builds content*; *delivery* is a separate step (email today), so swapping in
-an app/push channel later is just a new sender.
+Summarization is a bounded-channel pipeline: concurrent gather → a single LLM lane
+(protects local models) → per-section fold → a structured document rendered to a
+Markdown/HTML/subject triple, delivered by the digest's channel.
 
-## Architecture
+## Layout
 
 ```
-AutomationFunctions/
-├── Program.cs                 # DI registration + host
-├── Constants.cs              # default values, grouped by area (Llm, Email, Weather, ...)
-├── host.json                  # Functions host config
-├── local.settings.json        # your secrets/config (gitignored; copy from .example)
-├── Functions/                 # thin triggers
-│   └── DailyDigestFunction.cs       # timer + HTTP; builds digest, then sends it
-├── Services/                  # the reusable automation logic
-│   ├── DigestService.cs             # orchestrates the pipeline into one report
-│   ├── WebPageFetcher.cs            # download + strip HTML to text
-│   ├── OpenAiCompatibleLlmService.cs# local LLM via /chat/completions
-│   ├── ImapMailScanner.cs           # read recent mail over IMAP (MailKit)
-│   ├── SmtpEmailService.cs          # send mail over SMTP (MailKit)
-│   ├── OpenMeteoWeatherService.cs   # current weather, no API key
-│   ├── AviationWeatherService.cs    # METAR/TAF by ICAO code, no API key
-│   ├── AwcRunwayService.cs          # runways + magnetic variation from AWC airport API (cached)
-│   ├── MetarDecoder.cs              # decode wind/visibility/ceiling from raw METAR
-│   ├── Crosswind.cs                 # per-runway crosswind/headwind components
-│   └── HtmlFormat.cs                # inline-CSS helpers + weather highlighting rules
-└── Options/                   # strongly-typed config sections
+src/DailySummary.Core        interfaces, models, pipeline, summarization, rendering (no external deps)
+src/DailySummary.Providers   gatherers, summarizers, Playwright fetcher, search, delivery
+src/DailySummary.Functions   Functions host (Morning/Evening timer triggers), app.json, Dockerfile
+tests/DailySummary.Tests     xUnit: chunker, renderer, pipeline (with fakes)
 ```
 
-**Adding a step** = add a service under `Services/`, register it in `Program.cs`, and
-call it from `DigestService.BuildAsync`. **Adding a separate job on its own schedule** =
-add another `[TimerTrigger]` function under `Functions/`.
+The single solution is **`DailySummary.sln`**. Regenerate it any time with
+`scripts/regen-sln.sh` (wraps `dotnet sln`).
 
-## Prerequisites
-
-- [.NET 8 SDK](https://dotnet.microsoft.com/download)
-- [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local) (`func`)
-- [Azurite](https://learn.microsoft.com/azure/storage/common/storage-use-azurite) — the
-  local storage emulator that the timer runtime needs. Install with `npm i -g azurite`.
-- A running **local LLM** with an OpenAI-compatible API (e.g.
-  [Ollama](https://ollama.com): `ollama run llama3.1`, or LM Studio).
-
-## Setup
-
-1. **Create your settings file** (it's gitignored so secrets stay local):
-
-   ```bash
-   cd AutomationFunctions
-   cp local.settings.json.example local.settings.json
-   ```
-
-2. **Fill in `local.settings.json`:**
-
-   - **LLM** — point `Llm__BaseUrl` at your server (`http://localhost:11434/v1` for
-     Ollama) and set `Llm__Model` to a model you've pulled.
-   - **Email** — Gmail example below. Use a 16-character **App Password**
-     ([create one here](https://myaccount.google.com/apppasswords); requires 2FA),
-     *not* your normal password.
-
-     | Provider | `Email__SmtpHost` | `Email__SmtpPort` |
-     | --- | --- | --- |
-     | Gmail | `smtp.gmail.com` | `587` |
-     | Outlook/Office365* | `smtp.office365.com` | `587` |
-
-     \*Microsoft has been disabling SMTP basic-auth on personal Outlook accounts; if it
-     rejects you, Gmail is the reliable free option.
-   - **Weather** — set `Weather__Latitude` / `Weather__Longitude` to your location.
-   - **Aviation (optional)** — set `Aviation__Airports` to comma-separated ICAO codes
-     (e.g. `KJFK,KBOS`); empty skips the section. `Aviation__IncludeTaf` controls whether
-     the forecast is fetched too. Crosswind is computed automatically (runways are fetched
-     from the API); only set `Aviation__Runways__KJFK` / `Aviation__MagneticVariation__KJFK`
-     to override. Best set via User Secrets (below).
-   - **Summary** — set `Summary__Urls` to a comma-separated list of pages.
-   - **Inbox scan (optional)** — set `MailScan__Enabled` to `true` and fill in the
-     `MailScan__Accounts__0__*` (Gmail) and `__1__*` (Outlook) blocks. Use IMAP host
-     `imap.gmail.com` / `outlook.office365.com`, port `993`, and an **App Password**.
-     Gmail also needs IMAP enabled (Settings → Forwarding and POP/IMAP). Leave
-     `MailScan__Enabled=false` to skip the inbox section entirely.
-
-     \*Heads up: Microsoft is phasing out basic-auth IMAP on personal Outlook accounts in
-     favor of OAuth2 — if Outlook rejects the app password, Gmail is the reliable option,
-     and OAuth2 support can be added later.
-
-   > Config note: nested keys use the double-underscore convention (`Email__SmtpHost`),
-   > which binds to `EmailOptions.SmtpHost`. List items are indexed
-   > (`MailScan__Accounts__0__ImapHost`).
-
-### Where configuration lives
-
-Azure Functions doesn't use `appsettings.json`. Config comes from three layers, each
-overriding the one before:
-
-| Layer | Scope | Use for |
-| --- | --- | --- |
-| `Constants.cs` (in code) | fallback | non-secret defaults like ports, timeouts, units, prompts — grouped by area |
-| `local.settings.json` → env vars | local dev | everything; the `.example` lists every key |
-| **User Secrets** (`secrets.json`) | local dev | secrets, kept out of the project folder entirely |
-| **Application settings** | Azure | everything, including secrets, in the cloud |
-
-The `Options` classes seed their properties from `Constants.cs`, so every non-secret
-default lives in one place (e.g. `Constants.Email.SmtpPort`) and config still overrides it.
-
-**Keep secrets out of files with User Secrets.** Instead of putting your Gmail/IMAP
-passwords in `local.settings.json`, store them in the per-user secret store
-(`~/.microsoft/usersecrets/...`, never in the repo). Use `:` as the separator here:
+## Build & test
 
 ```bash
-cd AutomationFunctions
-dotnet user-secrets set "Email:Password" "your-app-password"
-dotnet user-secrets set "MailScan:Accounts:0:Password" "your-app-password"
-dotnet user-secrets set "Aviation:Airports" "KJFK,KBOS"   # your airports, ICAO codes
-dotnet user-secrets set "Aviation:Runways:KJFK" "04,13,22,31"   # for crosswind
+dotnet build DailySummary.sln
+dotnet test  DailySummary.sln
 ```
 
-`Program.cs` loads these automatically in local dev and ignores them in Azure (where you
-use Application settings instead).
+See [`QUICKSTART.md`](./QUICKSTART.md) for running locally (`func start`), Docker
+(`docker compose up`), configuration, and secrets.
 
-3. **Run it locally:**
+## Status
 
-   ```bash
-   azurite &                 # start the storage emulator (separate terminal is fine)
-   cd AutomationFunctions
-   func start
-   ```
-
-4. **Test a job immediately** (instead of waiting for the timer):
-
-   ```bash
-   curl http://localhost:7071/api/run/digest
-   ```
-
-   This runs the full pipeline immediately and returns the rendered digest (and emails
-   it). Locally the HTTP function key is not enforced, so it works as-is.
-
-## Email formatting & highlights
-
-The digest is HTML, so it uses **bold, colors, highlights, and bullet lists** (inline CSS
-only — that's all email clients reliably render). Highlighting is rule-based and centralized:
-
-- **Temperatures** at/above the hot threshold render red, at/below the cold threshold blue
-  (`Constants.Weather.HotF/ColdF/HotC/ColdC`).
-- **Raw METAR/TAF** tokens are color-coded: freezing precip / icing and snow **blue**,
-  thunderstorms / hail **red**, wind gusts **orange** (rules in
-  `WeatherHighlighter` in `Services/HtmlFormat.cs`).
-- **Each airport** gets a colored status dot by flight category — green VFR, blue MVFR,
-  red IFR, magenta LIFR (standard aviation colors) — plus **decoded** wind / visibility / ceiling /
-  temp-dewpoint / altimeter bullets (parsed from the raw METAR by `MetarDecoder`) above the
-  raw strings.
-- **Crosswind** per runway: runways and magnetic variation are **auto-fetched from the AWC
-  `airport` endpoint** (`AwcRunwayService`, cached in memory — no local runway database).
-  Heading comes from the runway number (`04` → 040°), then `Crosswind` computes the crosswind
-  (with gust) and headwind/tailwind from the METAR wind, correcting true→magnetic using the
-  airport's declination. Crosswinds ≥15 kt are orange, ≥25 kt red, tailwinds flagged red. You
-  can override per airport with `Aviation:Runways:<ICAO>` / `Aviation:MagneticVariation:<ICAO>`
-  if the API lacks an airport.
-
-Tweak the palette in one place (`Constants.Colors`), thresholds in `Constants.Weather`, and
-add new token rules in `WeatherHighlighter.ClassifyToken`. The `HtmlFormat` helper
-(`Bold`, `Color`, `ColorBold`, `Highlight`, `Bullets`) is reusable for any new section.
-
-## Changing the schedule
-
-The schedule is the `DigestSchedule` app setting (the timer binds to it via
-`%DigestSchedule%`), so you change *when* it runs without touching code. It's an
-NCRONTAB expression — `{second} {minute} {hour} {day} {month} {day-of-week}`:
-
-- `0 0 7 * * *` — every day at 07:00
-- `0 0 * * * *` — top of every hour
-- `0 */15 * * * *` — every 15 minutes
-
-Schedules run in **UTC** by default. To use local time, set `WEBSITE_TIME_ZONE`
-(e.g. `America/New_York`) in app settings (`TZ` on Linux).
-
-## Deploying to Azure
-
-```bash
-# one-time: create a Function App (Linux, .NET 8 isolated) + storage in the portal or CLI
-func azure functionapp publish <YourFunctionAppName>
-```
-
-Then add every key from `local.settings.json` (LLM, Email, Weather, Aviation, Summary,
-MailScan) to the Function App's **Application settings**. Note: a cloud-hosted Function App cannot reach
-a `localhost` LLM — for cloud runs, expose your model at a reachable URL (tunnel, VM,
-or hosted endpoint) and update `Llm__BaseUrl`. For a purely local LLM, run the Functions
-host on your own machine/VM instead.
-
-## Upgrading to .NET 10
-
-Change `<TargetFramework>net8.0</TargetFramework>` to `net10.0` in
-`AutomationFunctions.csproj`, then `dotnet restore` (it will pull compatible package
-versions). Everything else stays the same.
+Core, the pipeline, and most gatherers/summarizers/delivery are implemented.
+`sql` + `podcast` gatherers and the Whisper transcriber are honest stubs (they return an
+"unavailable" note or throw a clear message) — see `SPEC.md §6`.
