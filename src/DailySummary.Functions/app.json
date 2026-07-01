@@ -16,7 +16,15 @@
     {
       "name": "morning",
       "schedule": "0 0 6 * * *",
-      "delivery": { "channel": "markdown", "outputDir": "./out" },
+      "delivery": {
+        // Deliver to one or more channels. To also email, add "email" here and set SMTP_PASSWORD.
+        "channels": ["markdown"],
+        "outputDir": "C:\\Users\\Adam\\DailyDigests",   // absolute so it's easy to find; folder is auto-created
+        "email": {
+          "to": "adamnash19@gmail.com", "from": "adamnash19@gmail.com",
+          "smtpHost": "smtp.gmail.com", "smtpPort": 587, "passwordEnv": "SMTP_PASSWORD"
+        }
+      },
       "sections": [
         {
           "type": "weather", "heading": "Weather", "order": 0, "summarizer": "openai",
@@ -47,7 +55,14 @@
     {
       "name": "evening",
       "schedule": "0 0 22 * * *",
-      "delivery": { "channel": "console" },
+      "delivery": {
+        "channels": ["markdown"],
+        "outputDir": "C:\\Users\\Adam\\DailyDigests",
+        "email": {
+          "to": "adamnash19@gmail.com", "from": "adamnash19@gmail.com",
+          "smtpHost": "smtp.gmail.com", "smtpPort": 587, "passwordEnv": "SMTP_PASSWORD"
+        }
+      },
       "sections": [
         {
           "type": "prompt", "heading": "Today's Commits & PRs", "order": 0, "summarizer": "openai",

@@ -8,7 +8,7 @@ public sealed class ConsoleDelivery : IDeliveryChannel
 {
     public string Channel => "console";
 
-    public Task DeliverAsync(RenderedSummary doc, DeliveryConfig config, CancellationToken ct)
+    public Task DeliverAsync(RenderedSummary doc, DeliveryConfig config, string digestName, CancellationToken ct)
     {
         Console.WriteLine(doc.Markdown);
         return Task.CompletedTask;
