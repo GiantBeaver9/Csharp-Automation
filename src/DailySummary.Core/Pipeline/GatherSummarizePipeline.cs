@@ -119,7 +119,10 @@ public sealed class GatherSummarizePipeline
             summarySections.Add(new SummarySection(cfg.Order, cfg.Heading, entries));
         }
 
-        var title = $"Daily Brief — {DateTimeOffset.UtcNow:ddd, MMM d, yyyy}";
+        var label = string.IsNullOrWhiteSpace(digest.Name)
+            ? "Daily"
+            : char.ToUpperInvariant(digest.Name[0]) + digest.Name[1..];
+        var title = $"{label} Brief — {DateTimeOffset.UtcNow:ddd, MMM d, yyyy}";
         return new DigestDocument(title, summarySections);
     }
 

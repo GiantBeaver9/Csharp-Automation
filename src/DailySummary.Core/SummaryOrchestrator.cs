@@ -32,10 +32,25 @@ public sealed class SummaryOrchestrator : ISummaryOrchestrator
         var summary = await _pipeline.RunAsync(digest, _app, ct).ConfigureAwait(false);
         var rendered = _renderer.Render(summary);
 
-        if (!_delivery.TryGetValue(digest.Delivery.Channel, out var channel))
-            throw new KeyNotFoundException(
-                $"No delivery channel '{digest.Delivery.Channel}'. Available: {string.Join(", ", _delivery.Keys)}.");
+        var channelNames = digest.Delivery.ResolvedChannels();
 
-        await channel.DeliverAsync(rendered, digest.Delivery, ct).ConfigureAwait(false);
+        // Validate all up front so a typo fails fast (before any partial delivery).
+        foreach (var name in channelNames)
+            if (!_delivery.ContainsKey(name))
+                throw new KeyNotFoundException(
+                    $"No delivery channel '{name}'. Available: {string.Join(", ", _delivery.Keys)}.");
+
+        // Deliver to each; isolate per-channel failures (e.g. SMTP down must not block the markdown file).
+        foreach (var name in channelNames)
+        {
+            try
+            {
+                await _delivery[name].DeliverAsync(rendered, digest.Delivery, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Delivery channel '{name}' failed: {ex.Message}");
+            }
+        }
     }
 }

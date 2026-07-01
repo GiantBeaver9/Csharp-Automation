@@ -750,9 +750,13 @@ real `<ul>`/`<p>` — no manual tag juggling.
 
 | Channel | Pulls from triple | Behavior |
 |---------|-------------------|----------|
-| `markdown` | `doc.Markdown` | writes `{outputDir}/{yyyy-MM-dd}.md` |
+| `markdown` | `doc.Markdown` | writes `{outputDir}/{slug(subject)}.md` (subject includes digest name + date, so digests don't collide); creates `outputDir` if missing |
 | `console`  | `doc.Markdown` | prints to stdout / function logs |
 | `email`    | **all three** — `doc.Subject`, `doc.Html`, `doc.Markdown` | sends multipart email: HTML body + plaintext (Markdown) fallback |
+
+A digest's `delivery` may name **one** channel (`"channel": "markdown"`) or **several**
+(`"channels": ["markdown","email"]`); each is delivered independently and a per-channel
+failure (e.g. SMTP down) is isolated so the others still run.
 
 So "if email is the channel, we pull the HTML tags" = email uses `doc.Html` for
 the body and keeps `doc.Markdown` as the text/plain alternative; the subject is

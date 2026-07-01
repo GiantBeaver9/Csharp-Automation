@@ -65,9 +65,18 @@ public sealed class DigestConfig
 
 public sealed class DeliveryConfig
 {
+    /// <summary>Single-channel shorthand ("markdown" | "console" | "email").</summary>
     public string Channel { get; set; } = "console";
+
+    /// <summary>Multi-channel: deliver to each (e.g. ["markdown","email"]). Takes precedence over <see cref="Channel"/>.</summary>
+    public List<string>? Channels { get; set; }
+
     public string OutputDir { get; set; } = "./out";
     public EmailDeliveryConfig? Email { get; set; }
+
+    /// <summary>The channels to deliver to — <see cref="Channels"/> if set, else the single <see cref="Channel"/>.</summary>
+    public IReadOnlyList<string> ResolvedChannels() =>
+        Channels is { Count: > 0 } ? Channels : new List<string> { Channel };
 }
 
 public sealed class EmailDeliveryConfig
