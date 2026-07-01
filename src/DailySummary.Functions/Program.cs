@@ -29,6 +29,8 @@ var host = new HostBuilder()
             new OllamaSummarizer(sp.GetRequiredService<HttpClient>(), Cfg(app, "ollama")));
         services.AddSingleton<ISummarizer>(sp =>
             new ClaudeSummarizer(sp.GetRequiredService<HttpClient>(), Cfg(app, "claude")));
+        services.AddSingleton<ISummarizer>(sp =>
+            new OpenAiCompatibleSummarizer(sp.GetRequiredService<HttpClient>(), Cfg(app, "openai")));
         services.AddSingleton<ISummarizer, PassthroughSummarizer>();
         services.AddSingleton<SummarizerRegistry>();
         services.AddSingleton<SectionSummarizers>();

@@ -6,7 +6,10 @@
 
   "summarizers": {
     "claude": { "model": "claude-haiku-4-5", "apiKeyEnv": "ANTHROPIC_API_KEY" },
-    "ollama": { "endpoint": "http://localhost:11434", "model": "llama3.1" }
+    "ollama": { "endpoint": "http://localhost:11434", "model": "llama3.1" },
+    // OpenAI-compatible endpoint (LM Studio, llama.cpp server, vLLM, OpenAI).
+    // LM Studio: endpoint http://localhost:1234, model = the id shown in LM Studio's server tab.
+    "openai": { "endpoint": "http://localhost:1234", "model": "local-model" }
   },
 
   "digests": [
