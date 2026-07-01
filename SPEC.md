@@ -750,7 +750,7 @@ real `<ul>`/`<p>` — no manual tag juggling.
 
 | Channel | Pulls from triple | Behavior |
 |---------|-------------------|----------|
-| `markdown` | `doc.Markdown` | writes `{outputDir}/{digestName}.md`, bumping a numeric suffix (`morning-1.md`, `morning-2.md`, …) if the file exists so nothing is overwritten; creates `outputDir` if missing |
+| `markdown` | `doc.Markdown` | writes `{outputDir}/{yyyy-MM-dd}-{digestName}.md`, bumping a numeric suffix (`2026-07-01-morning-1.md`, …) if the file exists so nothing is overwritten; creates `outputDir` if missing |
 | `console`  | `doc.Markdown` | prints to stdout / function logs |
 | `email`    | **all three** — `doc.Subject`, `doc.Html`, `doc.Markdown` | sends multipart email: HTML body + plaintext (Markdown) fallback |
 

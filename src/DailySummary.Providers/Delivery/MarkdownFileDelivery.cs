@@ -13,9 +13,10 @@ public sealed class MarkdownFileDelivery : IDeliveryChannel
         var dir = string.IsNullOrWhiteSpace(config.OutputDir) ? "./out" : config.OutputDir;
         Directory.CreateDirectory(dir); // creates the folder (and parents) if missing
 
-        // Name the file after the digest ("morning.md"); if it already exists, bump a
-        // numeric suffix ("morning-1.md", "morning-2.md", …) so nothing is overwritten.
-        var path = NextAvailablePath(dir, Slug(digestName));
+        // Name the file {date}-{digest} ("2026-07-01-morning.md"); if it already exists, bump a
+        // numeric suffix ("2026-07-01-morning-1.md", …) so nothing is overwritten.
+        var baseName = $"{DateTimeOffset.UtcNow:yyyy-MM-dd}-{Slug(digestName)}";
+        var path = NextAvailablePath(dir, baseName);
         await File.WriteAllTextAsync(path, doc.Markdown, ct).ConfigureAwait(false);
         Console.WriteLine($"Wrote digest to {path}");
     }
