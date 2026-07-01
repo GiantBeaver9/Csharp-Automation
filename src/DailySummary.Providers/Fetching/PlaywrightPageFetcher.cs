@@ -38,10 +38,22 @@ public sealed class PlaywrightPageFetcher : IPageFetcher
             if (_browser is not null) return _browser;
             _playwright = await Playwright.CreateAsync().ConfigureAwait(false);
             var launch = new BrowserTypeLaunchOptions { Headless = !_config.Headed };
-            var engine = _config.Engine.Equals("chromium", StringComparison.OrdinalIgnoreCase)
-                ? _playwright.Chromium
-                : _playwright.Firefox;
-            _browser = await engine.LaunchAsync(launch).ConfigureAwait(false);
+            var engineName = _config.Engine.Equals("chromium", StringComparison.OrdinalIgnoreCase)
+                ? "chromium" : "firefox";
+            var engine = engineName == "chromium" ? _playwright.Chromium : _playwright.Firefox;
+
+            try
+            {
+                _browser = await engine.LaunchAsync(launch).ConfigureAwait(false);
+            }
+            catch (PlaywrightException ex) when (ex.Message.Contains("Executable doesn't exist"))
+            {
+                // Browser binary not installed for this Playwright version — install it (no pwsh needed)
+                // using the app's own version, then retry once. In Docker/CI the browser is baked in,
+                // so this path never runs there.
+                Microsoft.Playwright.Program.Main(new[] { "install", engineName });
+                _browser = await engine.LaunchAsync(launch).ConfigureAwait(false);
+            }
             return _browser;
         }
         finally
