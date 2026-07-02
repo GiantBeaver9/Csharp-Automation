@@ -56,7 +56,7 @@ public sealed class PlaywrightPageFetcher : IPageFetcher
                 @"els => els
                     .map(e => ((e.textContent || '').trim().replace(/\s+/g, ' ')) + '\t' + e.href)
                     .filter(s => { const p = s.split('\t'); return p[0].length >= 25 && (p[1] || '').startsWith('http'); })
-                    .slice(0, 40)").ConfigureAwait(false);
+                    .slice(0, 80)").ConfigureAwait(false);
 
             var seen = new HashSet<string>();
             var links = new List<PageLink>();

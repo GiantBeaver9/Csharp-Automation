@@ -7,6 +7,9 @@ public sealed class WebSettings
 {
     public List<string> Urls { get; set; } = new();
     public int MaxChars { get; set; } = 8000;
+
+    /// <summary>How many extracted page links to hand the LLM as link candidates (DOM order = lead stories first).</summary>
+    public int MaxLinks { get; set; } = 40;
 }
 
 /// <summary>Fetches configured pages via the (Firefox) page fetcher — one RawPiece per URL, folded to one entry.</summary>
@@ -34,7 +37,7 @@ public sealed class WebGatherer : ISectionGatherer
                 var links = page.Links.Count == 0
                     ? string.Empty
                     : "\n\nLINKS (headline — url):\n" +
-                      string.Join("\n", page.Links.Take(30).Select(l => $"- {l.Text} — {l.Url}"));
+                      string.Join("\n", page.Links.Take(s.MaxLinks).Select(l => $"- {l.Text} — {l.Url}"));
                 pieces.Add(new RawPiece(config.Order, config.Heading, null, null, $"{page.Title}\n{text}{links}"));
             }
             catch (Exception ex)
