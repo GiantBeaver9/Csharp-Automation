@@ -1,0 +1,15 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+
+    "MORNING_SCHEDULE": "0 0 6 * * *",
+    "EVENING_SCHEDULE": "0 0 22 * * *",
+
+    "ANTHROPIC_API_KEY": "",
+    "GMAIL_APP_PASSWORD": "",
+    "GCAL_ICAL_URL": "",
+    "SMTP_PASSWORD": ""
+  }
+}
