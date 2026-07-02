@@ -16,6 +16,11 @@ public static class DigestOrchestrator
     {
         var digestName = context.GetInput<string>() ?? "morning";
 
+        // If the heavy compute lives on a separate machine (Pi orchestrator → GPU PC), wake it and wait
+        // for its LLM server before doing any work. Deterministic: durable timers + recorded activity
+        // results only, so this survives orchestrator replay. Sleep is the PC's own idle timer, not ours.
+        await EnsureComputeAwakeAsync(context);
+
         var sections = await context.CallActivityAsync<SectionConfig[]>(
             nameof(DigestActivities.LoadSectionsActivity), digestName);
 
@@ -42,6 +47,29 @@ public static class DigestOrchestrator
 
         // DELIVER (I/O) → activity.
         await context.CallActivityAsync(nameof(DigestActivities.DeliverActivity), new DeliverWork(digestName, doc));
+    }
+
+    /// <summary>
+    /// Wake-on-LAN the compute node, then poll its LLM server on a durable timer until it answers or the
+    /// budget runs out. If it never comes up we proceed anyway — LLM-dependent sections fail in isolation
+    /// and still render as unavailable, while local sections (weather, calendar) are unaffected.
+    /// </summary>
+    private static async Task EnsureComputeAwakeAsync(TaskOrchestrationContext context)
+    {
+        var compute = await context.CallActivityAsync<RemoteComputeConfig?>(
+            nameof(DigestActivities.LoadComputeActivity), "");
+        if (compute is not { Enabled: true }) return;
+
+        await context.CallActivityAsync(nameof(DigestActivities.WakePcActivity), compute);
+
+        var deadline = context.CurrentUtcDateTime.AddSeconds(compute.MaxWaitSeconds);
+        var pollSeconds = Math.Max(1, compute.PollSeconds);
+        while (context.CurrentUtcDateTime < deadline)
+        {
+            if (await context.CallActivityAsync<bool>(nameof(DigestActivities.PcReadyActivity), compute))
+                return;
+            await context.CreateTimer(context.CurrentUtcDateTime.AddSeconds(pollSeconds), CancellationToken.None);
+        }
     }
 
     private static DigestDocument BuildDocument(string digestName, List<SummarizedPiece> pieces, DateTimeOffset now)

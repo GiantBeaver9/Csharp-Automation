@@ -1,4 +1,7 @@
+using System.Net;
+using System.Net.Sockets;
 using DailySummary.Core.Abstractions;
+using DailySummary.Core.Compute;
 using DailySummary.Core.Models;
 using DailySummary.Core.Pipeline;
 using DailySummary.Core.Summarization;
@@ -18,6 +21,7 @@ public sealed class DigestActivities
     private readonly ChunkedSummarizer _chunked;
     private readonly ISummaryRenderer _renderer;
     private readonly IReadOnlyDictionary<string, IDeliveryChannel> _delivery;
+    private readonly HttpClient _http;
 
     public DigestActivities(
         AppConfig app,
@@ -25,7 +29,8 @@ public sealed class DigestActivities
         SectionSummarizers summarizers,
         ChunkedSummarizer chunked,
         ISummaryRenderer renderer,
-        IEnumerable<IDeliveryChannel> deliveryChannels)
+        IEnumerable<IDeliveryChannel> deliveryChannels,
+        HttpClient http)
     {
         _app = app;
         _gatherers = gatherers;
@@ -33,6 +38,40 @@ public sealed class DigestActivities
         _chunked = chunked;
         _renderer = renderer;
         _delivery = deliveryChannels.ToDictionary(d => d.Channel, StringComparer.OrdinalIgnoreCase);
+        _http = http;
+    }
+
+    /// <summary>Returns the remote-compute config (or null when single-machine) for the orchestrator's gate.</summary>
+    [Function(nameof(LoadComputeActivity))]
+    public RemoteComputeConfig? LoadComputeActivity([ActivityTrigger] string _) => _app.RemoteCompute;
+
+    /// <summary>Wake the compute PC by broadcasting a Wake-on-LAN magic packet. Best-effort, fire-and-forget.</summary>
+    [Function(nameof(WakePcActivity))]
+    public async Task WakePcActivity([ActivityTrigger] RemoteComputeConfig cfg)
+    {
+        var packet = MagicPacket.Build(cfg.MacAddress);
+        using var udp = new UdpClient { EnableBroadcast = true };
+        var endpoint = new IPEndPoint(IPAddress.Parse(cfg.BroadcastAddress), cfg.WolPort);
+        await udp.SendAsync(packet, packet.Length, endpoint).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// True once the LLM server answers (LM Studio's model list). A loaded model is not required — the
+    /// model loads on the first summarize call. Never throws; a down/booting PC just reads as not-ready.
+    /// </summary>
+    [Function(nameof(PcReadyActivity))]
+    public async Task<bool> PcReadyActivity([ActivityTrigger] RemoteComputeConfig cfg)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            using var resp = await _http.GetAsync(cfg.ReadinessUrl, cts.Token).ConfigureAwait(false);
+            return resp.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     [Function(nameof(LoadSectionsActivity))]
