@@ -1,4 +1,5 @@
 using DailySummary.Core.Models;
+using Microsoft.Azure.Functions.Worker;
 using Microsoft.DurableTask;
 
 namespace DailySummary.Functions.Durable;
