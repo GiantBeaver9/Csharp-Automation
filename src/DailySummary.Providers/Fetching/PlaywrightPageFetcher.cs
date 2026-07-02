@@ -42,7 +42,37 @@ public sealed class PlaywrightPageFetcher : IPageFetcher
         await page.WaitForTimeoutAsync(1_500).ConfigureAwait(false);
         var title = await page.TitleAsync().ConfigureAwait(false);
         var text = await page.InnerTextAsync("body").ConfigureAwait(false);
-        return new PageContent(url, title, text);
+        var links = await ExtractLinksAsync(page).ConfigureAwait(false);
+        return new PageContent(url, title, text, links);
+    }
+
+    // Anchors are lost in innerText, so pull them separately (headline text + absolute href) as
+    // "text\thref" strings — a robust shape to marshal from JS — then parse. Filters out nav/short links.
+    private static async Task<IReadOnlyList<PageLink>> ExtractLinksAsync(IPage page)
+    {
+        try
+        {
+            var raw = await page.EvalOnSelectorAllAsync<string[]>("a[href]",
+                @"els => els
+                    .map(e => ((e.textContent || '').trim().replace(/\s+/g, ' ')) + '\t' + e.href)
+                    .filter(s => { const p = s.split('\t'); return p[0].length >= 25 && (p[1] || '').startsWith('http'); })
+                    .slice(0, 40)").ConfigureAwait(false);
+
+            var seen = new HashSet<string>();
+            var links = new List<PageLink>();
+            foreach (var s in raw)
+            {
+                var tab = s.IndexOf('\t');
+                if (tab <= 0) continue;
+                var href = s[(tab + 1)..];
+                if (seen.Add(href)) links.Add(new PageLink(s[..tab], href));
+            }
+            return links;
+        }
+        catch (PlaywrightException)
+        {
+            return Array.Empty<PageLink>();
+        }
     }
 
     private async Task<IBrowser> EnsureBrowserAsync()

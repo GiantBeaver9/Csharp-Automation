@@ -41,7 +41,9 @@ public sealed class RssGatherer : ISectionGatherer
             foreach (var item in feed.Items.Where(i => i.PublishDate >= cutoff).Take(s.MaxItemsPerFeed))
             {
                 var body = item.Summary?.Text ?? (item.Content as TextSyndicationContent)?.Text ?? string.Empty;
-                var text = $"{item.Title?.Text}\n{body}";
+                var link = item.Links.FirstOrDefault()?.Uri?.ToString();
+                // Include the item URL so the summarizer can link the most impactful ones.
+                var text = link is null ? $"{item.Title?.Text}\n{body}" : $"{item.Title?.Text}\n{link}\n{body}";
                 pieces.Add(new RawPiece(config.Order, config.Heading, feedTitle, null, text));
             }
         }

@@ -19,7 +19,10 @@ public sealed record RawPiece(
     string? Error = null);
 
 /// <summary>A fetched web page.</summary>
-public sealed record PageContent(string Url, string Title, string Text);
+public sealed record PageContent(string Url, string Title, string Text, IReadOnlyList<PageLink> Links);
+
+/// <summary>A hyperlink extracted from a page (anchor text + href), so the LLM can cite top stories.</summary>
+public sealed record PageLink(string Text, string Url);
 
 /// <summary>A single web-search result.</summary>
 public sealed record SearchResult(string Title, string Url, string Snippet);

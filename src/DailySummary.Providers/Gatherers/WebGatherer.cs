@@ -30,7 +30,12 @@ public sealed class WebGatherer : ISectionGatherer
             {
                 var page = await _fetcher.FetchAsync(url, ct).ConfigureAwait(false);
                 var text = page.Text.Length > s.MaxChars ? page.Text[..s.MaxChars] : page.Text;
-                pieces.Add(new RawPiece(config.Order, config.Heading, null, null, $"{page.Title}\n{text}"));
+                // Append the on-page links so the summarizer can cite the top stories by URL.
+                var links = page.Links.Count == 0
+                    ? string.Empty
+                    : "\n\nLINKS (headline — url):\n" +
+                      string.Join("\n", page.Links.Take(30).Select(l => $"- {l.Text} — {l.Url}"));
+                pieces.Add(new RawPiece(config.Order, config.Heading, null, null, $"{page.Title}\n{text}{links}"));
             }
             catch (Exception ex)
             {
