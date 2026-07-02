@@ -13,6 +13,7 @@ public enum SectionType
     GoogleCalendar,
     Question,
     Email,
+    Outlook,
     Prompt
 }
 
