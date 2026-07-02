@@ -7,8 +7,7 @@
   "summarizers": {
     "claude": { "model": "claude-haiku-4-5", "apiKeyEnv": "ANTHROPIC_API_KEY" },
     "ollama": { "endpoint": "http://localhost:11434", "model": "llama3.1" },
-    // OpenAI-compatible endpoint (LM Studio, llama.cpp server, vLLM, OpenAI).
-    // LM Studio: endpoint http://localhost:1234, model = the id shown in LM Studio's server tab.
+    // LM Studio (OpenAI-compatible): model = the id shown in LM Studio's server tab.
     "openai": { "endpoint": "http://localhost:1234", "model": "local-model" }
   },
 
@@ -17,46 +16,7 @@
       "name": "morning",
       "schedule": "0 0 6 * * *",
       "delivery": {
-        // Deliver to one or more channels. To also email, add "email" here and set SMTP_PASSWORD.
-        "channels": ["markdown"],
-        "outputDir": "C:\\Users\\Adam\\DailyDigests",   // absolute so it's easy to find; folder is auto-created
-        "email": {
-          "to": "adamnash19@gmail.com", "from": "adamnash19@gmail.com",
-          "smtpHost": "smtp.gmail.com", "smtpPort": 587, "passwordEnv": "SMTP_PASSWORD"
-        }
-      },
-      "sections": [
-        {
-          "type": "weather", "heading": "Weather", "order": 0, "summarizer": "openai",
-          "timeoutSeconds": 300,
-          "settings": { "latitude": 40.71, "longitude": -74.01, "units": "imperial" }
-        },
-        {
-          "type": "rss", "heading": "Feeds", "order": 1, "summarizer": "openai",
-          "timeoutSeconds": 300,
-          "settings": { "feeds": ["https://hnrss.org/frontpage"], "maxItemsPerFeed": 10, "since": "1d" }
-        },
-        {
-          "type": "googleCalendar", "heading": "Calendar", "order": 2, "summarizer": "none",
-          "timeoutSeconds": 300,
-          "settings": { "icalUrlEnv": "GCAL_ICAL_URL", "views": ["today", "week"], "weekDays": 7 }
-        },
-        {
-          "type": "prompt", "heading": "Yesterday's Commits & PRs", "order": 3, "summarizer": "openai",
-          "timeoutSeconds": 300,
-          "settings": {
-            "mode": "enumerate",
-            "listPrompt": "Using your GitHub tools, LIST every commit and PR from yesterday for giantbeaver9/csharp-automation, one identifier per line. Do NOT summarize.",
-            "itemPrompt": "Summarize this single commit/PR in 1-2 lines:\n{item}"
-          }
-        }
-      ]
-    },
-    {
-      "name": "evening",
-      "schedule": "0 0 22 * * *",
-      "delivery": {
-        "channels": ["markdown"],
+        "channels": ["markdown", "email"],
         "outputDir": "C:\\Users\\Adam\\DailyDigests",
         "email": {
           "to": "adamnash19@gmail.com", "from": "adamnash19@gmail.com",
@@ -64,15 +24,109 @@
         }
       },
       "sections": [
-        {
-          "type": "prompt", "heading": "Today's Commits & PRs", "order": 0, "summarizer": "openai",
+        { "type": "weather", "heading": "Weather", "order": 0, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "settings": { "latitude": 40.71, "longitude": -74.01, "units": "imperial" } },
+
+        { "type": "web", "heading": "Programming News", "order": 1, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "settings": { "urls": ["https://news.ycombinator.com", "https://www.infoq.com", "https://daily.dev"] } },
+
+        { "type": "web", "heading": "Gaming News", "order": 2, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "settings": { "urls": ["https://www.pcgamer.com", "https://www.ign.com", "https://www.eurogamer.net",
+                                 "https://www.nintendolife.com", "https://www.pushsquare.com", "https://www.purexbox.com"] } },
+
+        { "type": "web", "heading": "US News", "order": 3, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "settings": { "urls": ["https://foxnews.com", "https://cnn.com", "https://msn.com", "https://breitbart.com"] } },
+
+        { "type": "web", "heading": "World News", "order": 4, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "settings": { "urls": ["https://www.bbc.com/news", "https://www.reuters.com/world/", "https://www.aljazeera.com"] } },
+
+        { "type": "web", "heading": "Finance", "order": 5, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "settings": { "urls": ["https://seekingalpha.com", "https://finance.yahoo.com", "https://investing.com"] } },
+
+        { "type": "rss", "heading": "Reddit", "order": 6, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "settings": { "maxItemsPerFeed": 5, "since": "1d",
+                        "feeds": ["https://www.reddit.com/r/all/top/.rss?t=day",
+                                  "https://www.reddit.com/r/AITAH/top/.rss?t=day",
+                                  "https://www.reddit.com/r/Games/top/.rss?t=day",
+                                  "https://www.reddit.com/r/pcgaming/top/.rss?t=day",
+                                  "https://www.reddit.com/r/nintendo/top/.rss?t=day",
+                                  "https://www.reddit.com/r/PS5/top/.rss?t=day",
+                                  "https://www.reddit.com/r/XboxSeriesX/top/.rss?t=day",
+                                  "https://www.reddit.com/r/Spacemarine/top/.rss?t=day"] } },
+
+        // --- Multilingual: each summarizes IN the target language (per-section prompt override) ---
+        { "type": "web", "heading": "Español", "order": 7, "summarizer": "openai", "timeoutSeconds": 300,
+          "prompt": "Resume los titulares principales en español, de forma concisa.",
+          "settings": { "urls": ["https://elpais.com", "https://www.bbc.com/mundo"] } },
+
+        { "type": "web", "heading": "Français", "order": 8, "summarizer": "openai", "timeoutSeconds": 300,
+          "prompt": "Résume les principaux titres en français, de façon concise.",
+          "settings": { "urls": ["https://www.lemonde.fr", "https://www.france24.com/fr/"] } },
+
+        { "type": "web", "heading": "Deutsch (lernen)", "order": 9, "summarizer": "openai", "timeoutSeconds": 300,
+          "prompt": "Summarize the top headlines in simple German, then add a one-line English gloss under each.",
+          "settings": { "urls": ["https://www.spiegel.de", "https://www.dw.com/de/"] } },
+
+        { "type": "web", "heading": "Русский (учить)", "order": 10, "summarizer": "openai", "timeoutSeconds": 300,
+          "prompt": "Summarize the top headlines in simple Russian, then add a one-line English gloss under each.",
+          "settings": { "urls": ["https://meduza.io"] } },
+
+        { "type": "web", "heading": "Italiano", "order": 11, "summarizer": "openai", "timeoutSeconds": 300,
+          "prompt": "Riassumi i titoli principali in italiano, in modo conciso.",
+          "settings": { "urls": ["https://www.corriere.it", "https://www.ansa.it"] } },
+
+        { "type": "web", "heading": "Português", "order": 12, "summarizer": "openai", "timeoutSeconds": 300,
+          "prompt": "Resuma as principais manchetes em português, de forma concisa.",
+          "settings": { "urls": ["https://www.publico.pt", "https://g1.globo.com"] } },
+
+        { "type": "web", "heading": "Norsk (lære)", "order": 13, "summarizer": "openai", "timeoutSeconds": 300,
+          "prompt": "Summarize the top headlines in simple Norwegian, then add a one-line English gloss under each.",
+          "settings": { "urls": ["https://www.nrk.no", "https://www.aftenposten.no"] } },
+
+        { "type": "web", "heading": "Madagascar", "order": 14, "summarizer": "openai", "timeoutSeconds": 300,
+          // Malagasy-language sources online are scarce; these are mostly French-language Madagascar outlets.
+          "prompt": "Résume l'actualité de Madagascar en français, de façon concise.",
+          "settings": { "urls": ["https://www.madagascar-tribune.com", "https://lexpress.mg"] } },
+
+        { "type": "googleCalendar", "heading": "Calendar", "order": 15, "summarizer": "none",
+          "timeoutSeconds": 300,
+          "settings": { "icalUrlEnv": "GCAL_ICAL_URL", "views": ["today", "week"], "weekDays": 7 } },
+
+        { "type": "prompt", "heading": "Yesterday's Commits & PRs", "order": 16, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "settings": {
+            "mode": "enumerate",
+            "listPrompt": "Using your GitHub tools, LIST every commit and PR from yesterday for giantbeaver9/csharp-automation, one identifier per line. Do NOT summarize.",
+            "itemPrompt": "Summarize this single commit/PR in 1-2 lines:\n{item}"
+          } }
+      ]
+    },
+    {
+      "name": "evening",
+      "schedule": "0 0 22 * * *",
+      "delivery": {
+        "channels": ["markdown", "email"],
+        "outputDir": "C:\\Users\\Adam\\DailyDigests",
+        "email": {
+          "to": "adamnash19@gmail.com", "from": "adamnash19@gmail.com",
+          "smtpHost": "smtp.gmail.com", "smtpPort": 587, "passwordEnv": "SMTP_PASSWORD"
+        }
+      },
+      "sections": [
+        { "type": "prompt", "heading": "Today's Commits & PRs", "order": 0, "summarizer": "openai",
           "timeoutSeconds": 300,
           "settings": {
             "mode": "enumerate",
             "listPrompt": "Using your GitHub tools, LIST every commit and PR from today for giantbeaver9/csharp-automation, one identifier per line. Do NOT summarize.",
             "itemPrompt": "Summarize this single commit/PR in 1-2 lines:\n{item}"
-          }
-        }
+          } }
       ]
     }
   ]
