@@ -21,10 +21,16 @@ public sealed class EmailDelivery : IDeliveryChannel
         message.Subject = doc.Subject;
         message.Body = new BodyBuilder { HtmlBody = doc.Html, TextBody = doc.Markdown }.ToMessageBody();
 
-        var password = Environment.GetEnvironmentVariable(cfg.PasswordEnv) ?? string.Empty;
+        // Gmail App Passwords are shown as "abcd efgh ijkl mnop" — strip spaces so a copy/paste works.
+        var password = (Environment.GetEnvironmentVariable(cfg.PasswordEnv) ?? string.Empty).Replace(" ", "");
+        if (string.IsNullOrEmpty(password))
+            throw new InvalidOperationException(
+                $"Email password env var '{cfg.PasswordEnv}' is empty. For Gmail: enable 2-Step Verification " +
+                "and generate a 16-character App Password (a normal account password will NOT work).");
 
         using var client = new SmtpClient();
-        await client.ConnectAsync(cfg.SmtpHost, cfg.SmtpPort, MailKit.Security.SecureSocketOptions.StartTls, ct)
+        // Auto picks StartTls for port 587 and SSL-on-connect for 465 — works regardless of which port is set.
+        await client.ConnectAsync(cfg.SmtpHost, cfg.SmtpPort, MailKit.Security.SecureSocketOptions.Auto, ct)
             .ConfigureAwait(false);
         await client.AuthenticateAsync(cfg.From, password, ct).ConfigureAwait(false);
         await client.SendAsync(message, ct).ConfigureAwait(false);
