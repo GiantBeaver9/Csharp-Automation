@@ -16,8 +16,12 @@ public sealed class MorningDigestFunction
         _log = log;
     }
 
+    // CRON is a literal (the host resolves the attribute; it can't read app.json). Keep in sync with
+    // app.json digests[name=="morning"].schedule, which documents the intended schedule.
+    // UseMonitor=false: skip the blob-backed schedule monitor (no missed-run catch-up), so the timer
+    // doesn't need to create a schedule-monitor blob container. Runs still fire on schedule.
     [Function(nameof(MorningDigestFunction))]
-    public async Task Run([TimerTrigger("%MORNING_SCHEDULE%")] TimerInfo timer, CancellationToken ct)
+    public async Task Run([TimerTrigger("0 0 6 * * *", UseMonitor = false)] TimerInfo timer, CancellationToken ct)
     {
         _log.LogInformation("Running morning digest at {Time}", DateTimeOffset.UtcNow);
         await _orchestrator.RunAsync("morning", ct);
