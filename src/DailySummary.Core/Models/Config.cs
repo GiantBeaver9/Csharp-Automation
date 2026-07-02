@@ -102,14 +102,18 @@ public sealed class SectionConfig
     /// <summary>Optional prompt override; when null the default for <see cref="Type"/> is used.</summary>
     public string? Prompt { get; set; }
 
-    /// <summary>Type-specific settings, parsed by the matching gatherer.</summary>
-    public JsonElement Settings { get; set; }
+    /// <summary>
+    /// Type-specific settings, parsed by the matching gatherer. Nullable so a settings-less section
+    /// serializes cleanly — a default (Undefined) <see cref="JsonElement"/> throws on WriteTo, which
+    /// would crash the Durable activity boundary when a section omits "settings".
+    /// </summary>
+    public JsonElement? Settings { get; set; }
 
     /// <summary>Deserialize <see cref="Settings"/> into a strongly-typed options object.</summary>
     public T SettingsAs<T>() where T : new() =>
-        Settings.ValueKind == JsonValueKind.Undefined || Settings.ValueKind == JsonValueKind.Null
+        Settings is not { } el || el.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
             ? new T()
-            : Settings.Deserialize<T>(JsonOpts) ?? new T();
+            : el.Deserialize<T>(JsonOpts) ?? new T();
 
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 }

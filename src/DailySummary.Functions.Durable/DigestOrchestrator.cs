@@ -1,3 +1,4 @@
+using System.Globalization;
 using DailySummary.Core.Models;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.DurableTask;
@@ -64,6 +65,7 @@ public static class DigestOrchestrator
         var label = string.IsNullOrWhiteSpace(digestName)
             ? "Daily"
             : char.ToUpperInvariant(digestName[0]) + digestName[1..];
-        return new DigestDocument($"{label} Brief — {now:ddd, MMM d, yyyy}", sections);
+        var date = now.ToString("ddd, MMM d, yyyy", CultureInfo.InvariantCulture);
+        return new DigestDocument($"{label} Brief — {date}", sections);
     }
 }

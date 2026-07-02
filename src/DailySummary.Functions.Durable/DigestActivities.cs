@@ -1,4 +1,3 @@
-using DailySummary.Core;
 using DailySummary.Core.Abstractions;
 using DailySummary.Core.Models;
 using DailySummary.Core.Pipeline;
