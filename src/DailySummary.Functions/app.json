@@ -28,17 +28,17 @@
       "sections": [
         {
           "type": "weather", "heading": "Weather", "order": 0, "summarizer": "openai",
-          "timeoutSeconds": 30,
+          "timeoutSeconds": 300,
           "settings": { "latitude": 40.71, "longitude": -74.01, "units": "imperial" }
         },
         {
           "type": "rss", "heading": "Feeds", "order": 1, "summarizer": "openai",
-          "timeoutSeconds": 45,
+          "timeoutSeconds": 300,
           "settings": { "feeds": ["https://hnrss.org/frontpage"], "maxItemsPerFeed": 10, "since": "1d" }
         },
         {
           "type": "googleCalendar", "heading": "Calendar", "order": 2, "summarizer": "none",
-          "timeoutSeconds": 30,
+          "timeoutSeconds": 300,
           "settings": { "icalUrlEnv": "GCAL_ICAL_URL", "views": ["today", "week"], "weekDays": 7 }
         },
         {
