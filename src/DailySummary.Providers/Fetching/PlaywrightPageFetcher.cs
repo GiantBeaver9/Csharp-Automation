@@ -23,7 +23,23 @@ public sealed class PlaywrightPageFetcher : IPageFetcher
         await using var context = await browser.NewContextAsync().ConfigureAwait(false);
         var page = await context.NewPageAsync().ConfigureAwait(false);
 
-        await page.GotoAsync(url, new PageGotoOptions { WaitUntil = WaitUntilState.NetworkIdle }).ConfigureAwait(false);
+        // DOMContentLoaded, NOT NetworkIdle: ad/tracker-heavy news sites (MSN, investing.com, …)
+        // never go network-idle, so NetworkIdle hangs until the nav timeout and starves the other
+        // URLs in the section. DOMContentLoaded fires reliably; a short settle lets late content paint.
+        try
+        {
+            await page.GotoAsync(url, new PageGotoOptions
+            {
+                WaitUntil = WaitUntilState.DOMContentLoaded,
+                Timeout = 30_000
+            }).ConfigureAwait(false);
+        }
+        catch (PlaywrightException)
+        {
+            // Heavy/bot-hostile pages may still exceed the nav timeout — read whatever rendered.
+        }
+
+        await page.WaitForTimeoutAsync(1_500).ConfigureAwait(false);
         var title = await page.TitleAsync().ConfigureAwait(false);
         var text = await page.InnerTextAsync("body").ConfigureAwait(false);
         return new PageContent(url, title, text);
