@@ -40,11 +40,18 @@ cp local.settings.json.example local.settings.json   # then fill in any secrets
 func start                                            # requires Azure Functions Core Tools
 ```
 
-Trigger a digest immediately via the admin endpoint:
+Trigger a digest immediately via the admin endpoint (needs the JSON header/body,
+or the endpoint returns **415 Unsupported Media Type**):
+
+```powershell
+# PowerShell
+Invoke-RestMethod -Method Post http://localhost:7071/admin/functions/MorningDigestFunction -ContentType 'application/json' -Body '{}'
+Invoke-RestMethod -Method Post http://localhost:7071/admin/functions/EveningDigestFunction -ContentType 'application/json' -Body '{}'
+```
 
 ```bash
-curl -X POST http://localhost:7071/admin/functions/MorningDigestFunction
-curl -X POST http://localhost:7071/admin/functions/EveningDigestFunction
+# curl
+curl -X POST http://localhost:7071/admin/functions/MorningDigestFunction -H "Content-Type: application/json" -d "{}"
 ```
 
 The `markdown` channel writes `./out/<date>.md`; `console` prints to logs.

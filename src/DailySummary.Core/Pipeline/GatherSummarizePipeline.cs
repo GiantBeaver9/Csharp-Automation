@@ -82,8 +82,12 @@ public sealed class GatherSummarizePipeline
                 try
                 {
                     var pair = _summarizers.For(section, piece);
-                    var body = string.IsNullOrEmpty(piece.Text)
-                        ? await WithTimeout(t => pair.Chunk(string.Empty, t), section.TimeoutSeconds, ct).ConfigureAwait(false)
+                    // Single atomic call (no chunking) for instruction-only or self-prompted pieces
+                    // (prompt sections, and the "Selected Top Links" pass — chunking a link list is wasteful
+                    // and would fragment the selection). Everything else uses the chunked map-reduce.
+                    var singleCall = string.IsNullOrEmpty(piece.Text) || piece.PromptOverride is not null;
+                    var body = singleCall
+                        ? await WithTimeout(t => pair.Chunk(piece.Text, t), section.TimeoutSeconds, ct).ConfigureAwait(false)
                         : await WithTimeout(t => _chunked.SummarizeAsync(piece.Text, pair.Chunk, pair.Final, t),
                             section.TimeoutSeconds, ct).ConfigureAwait(false);
                     results.Enqueue(new PieceResult(section.Order, section.Heading, piece.SubHeading, body, Failed: false));

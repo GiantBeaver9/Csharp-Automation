@@ -2,6 +2,7 @@ using System.ServiceModel.Syndication;
 using System.Text;
 using System.Xml;
 using DailySummary.Core.Abstractions;
+using DailySummary.Core.Constants;
 using DailySummary.Core.Models;
 
 namespace DailySummary.Providers.Gatherers;
@@ -28,6 +29,8 @@ public sealed class RssGatherer : ISectionGatherer
         var s = config.SettingsAs<RssSettings>();
         var cutoff = DateTimeOffset.UtcNow - ParseSince(s.Since);
         var pieces = new List<RawPiece>();
+        var allLinks = new List<PageLink>();
+        var seen = new HashSet<string>();
 
         foreach (var feedUrl in s.Feeds)
         {
@@ -41,9 +44,25 @@ public sealed class RssGatherer : ISectionGatherer
             foreach (var item in feed.Items.Where(i => i.PublishDate >= cutoff).Take(s.MaxItemsPerFeed))
             {
                 var body = item.Summary?.Text ?? (item.Content as TextSyndicationContent)?.Text ?? string.Empty;
-                var text = $"{item.Title?.Text}\n{body}";
-                pieces.Add(new RawPiece(config.Order, config.Heading, feedTitle, null, text));
+                var title = item.Title?.Text ?? "(untitled)";
+                pieces.Add(new RawPiece(config.Order, config.Heading, feedTitle, null, $"{title}\n{body}"));
+
+                var link = item.Links.FirstOrDefault()?.Uri?.ToString();
+                if (link is not null && seen.Add(link))
+                {
+                    var snippet = body.Length > 200 ? body[..200] : body;
+                    allLinks.Add(new PageLink(title, link, snippet));
+                }
             }
+        }
+
+        // Separate "Selected Top Links" piece: its own clean LLM call over just the feed item links.
+        if (allLinks.Count > 0)
+        {
+            var linksText = string.Join("\n", allLinks.Select(l =>
+                string.IsNullOrEmpty(l.Context) ? $"- {l.Text} — {l.Url}" : $"- {l.Text} — {l.Url} — {l.Context}"));
+            pieces.Add(new RawPiece(config.Order, config.Heading, "Selected Top Links", null, linksText,
+                PromptOverride: Prompts.LinkSelection));
         }
 
         return pieces;
