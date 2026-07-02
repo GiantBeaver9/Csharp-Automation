@@ -56,6 +56,31 @@ public class OutlookGathererTests
     }
 
     [Fact]
+    public void FormatMessage_StripsHtml_WhenBodyContentTypeIsHtml()
+    {
+        var m = new OutlookGatherer.GraphMessage
+        {
+            Subject = "HTML mail",
+            IsRead = true,
+            From = new OutlookGatherer.GraphFrom
+            {
+                EmailAddress = new OutlookGatherer.GraphEmailAddress { Address = "a@b.com" }
+            },
+            Body = new OutlookGatherer.GraphBody
+            {
+                ContentType = "html",
+                Content = "<style>.x{}</style><p>Hello&nbsp;<b>world</b></p><script>evil()</script>"
+            }
+        };
+
+        var text = OutlookGatherer.FormatMessage(m);
+
+        Assert.Contains("Hello world", text);
+        Assert.DoesNotContain("<", text);
+        Assert.DoesNotContain("evil()", text); // script contents removed
+    }
+
+    [Fact]
     public void FormatMessage_FallsBackToPreview_WhenBodyEmpty()
     {
         var m = new OutlookGatherer.GraphMessage

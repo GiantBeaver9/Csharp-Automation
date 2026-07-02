@@ -28,7 +28,7 @@
     <!-- Google Calendar secret iCal parsing -->
     <PackageReference Include="Ical.Net" Version="4.2.0" />
     <!-- Outlook via Microsoft Graph: delegated device-code auth + silent refresh (no client secret) -->
-    <PackageReference Include="Azure.Identity" Version="1.13.1" />
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <!-- Local Whisper transcription for podcasts -->
     <PackageReference Include="Whisper.net" Version="1.7.1" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />

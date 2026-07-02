@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Azure.Core;
 using Azure.Identity;
 using DailySummary.Core.Abstractions;
@@ -123,9 +124,32 @@ public sealed class OutlookGatherer : ISectionGatherer
             ? string.IsNullOrWhiteSpace(a.Name) ? a.Address : $"{a.Name} <{a.Address}>"
             : "(unknown)";
         var received = m.ReceivedDateTime?.ToString("ddd, MMM d HH:mm") ?? "";
-        var body = string.IsNullOrWhiteSpace(m.Body?.Content) ? m.BodyPreview : m.Body!.Content;
         var flag = m.IsRead ? "" : "[unread] ";
-        return $"{flag}From: {sender}\nReceived: {received}\nSubject: {m.Subject}\n\n{body?.Trim()}";
+        return $"{flag}From: {sender}\nReceived: {received}\nSubject: {m.Subject}\n\n{BodyText(m)}";
+    }
+
+    /// <summary>
+    /// Best plain-text body. The Prefer header usually yields text, but Graph is documented to
+    /// sometimes still return HTML — strip it defensively so the summarizer isn't fed markup.
+    /// Falls back to the always-plain bodyPreview when there's no usable body.
+    /// </summary>
+    internal static string BodyText(GraphMessage m)
+    {
+        var content = m.Body?.Content;
+        if (string.IsNullOrWhiteSpace(content))
+            return (m.BodyPreview ?? "").Trim();
+        return string.Equals(m.Body?.ContentType, "html", StringComparison.OrdinalIgnoreCase)
+            ? StripHtml(content)
+            : content.Trim();
+    }
+
+    private static string StripHtml(string html)
+    {
+        var noBlocks = Regex.Replace(html, "<(script|style)[^>]*>.*?</\\1>", " ",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var noTags = Regex.Replace(noBlocks, "<[^>]+>", " ");
+        var decoded = System.Net.WebUtility.HtmlDecode(noTags);
+        return Regex.Replace(decoded, "\\s+", " ").Trim();
     }
 
     private async Task<string> AcquireTokenAsync(OutlookSettings s, CancellationToken ct)
