@@ -49,6 +49,35 @@ curl -X POST http://localhost:7071/admin/functions/EveningDigestFunction
 
 The `markdown` channel writes `./out/<date>.md`; `console` prints to logs.
 
+## Playwright browser (for `web` / `question` sections)
+
+Those sections render pages with **headed Firefox**, which needs the Playwright
+browser binary installed once. Two ways:
+
+**Automatic (no PowerShell needed).** The app installs the matching Firefox on first
+use if it's missing. The very first run downloads ~80 MB *during* the run, so a `web`
+section may time out that once — just run the digest a **second time** and it's cached.
+
+**Manual (front-loads the download).** Requires **PowerShell 7** (`pwsh`, not Windows
+PowerShell 5 — install with `winget install Microsoft.PowerShell`, then a new terminal):
+
+```powershell
+# use THIS project's script so the browser revision matches the app's Playwright version
+pwsh src\DailySummary.Providers\bin\Debug\net8.0\playwright.ps1 install firefox
+```
+
+Verify it landed:
+
+```powershell
+dir "$env:LOCALAPPDATA\ms-playwright\firefox-*\firefox\firefox.exe"
+```
+
+> Common failure: `Executable doesn't exist at …\firefox-####\…` means the browser for
+> the app's Playwright version isn't installed (or a *different* version's script
+> installed a different revision). Always install via the script under
+> `DailySummary.Providers\bin\...`. In Docker the browser is baked into the image, so
+> none of this applies there.
+
 ## Run in Docker
 
 ```bash
