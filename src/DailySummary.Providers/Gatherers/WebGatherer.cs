@@ -36,8 +36,11 @@ public sealed class WebGatherer : ISectionGatherer
                 // Append the on-page links so the summarizer can cite the top stories by URL.
                 var links = page.Links.Count == 0
                     ? string.Empty
-                    : "\n\nLINKS (headline — url):\n" +
-                      string.Join("\n", page.Links.Take(s.MaxLinks).Select(l => $"- {l.Text} — {l.Url}"));
+                    : "\n\nLINKS (headline — url — context):\n" +
+                      string.Join("\n", page.Links.Take(s.MaxLinks).Select(l =>
+                          string.IsNullOrEmpty(l.Context)
+                              ? $"- {l.Text} — {l.Url}"
+                              : $"- {l.Text} — {l.Url}\n    context: {l.Context}"));
                 pieces.Add(new RawPiece(config.Order, config.Heading, null, null, $"{page.Title}\n{text}{links}"));
             }
             catch (Exception ex)

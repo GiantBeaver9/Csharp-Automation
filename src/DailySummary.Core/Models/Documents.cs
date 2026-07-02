@@ -21,8 +21,11 @@ public sealed record RawPiece(
 /// <summary>A fetched web page.</summary>
 public sealed record PageContent(string Url, string Title, string Text, IReadOnlyList<PageLink> Links);
 
-/// <summary>A hyperlink extracted from a page (anchor text + href), so the LLM can cite top stories.</summary>
-public sealed record PageLink(string Text, string Url);
+/// <summary>
+/// A hyperlink extracted from a page: the anchor text (headline), its href, and a short blurb
+/// from the surrounding container (dek/context) so the LLM knows what the link is about.
+/// </summary>
+public sealed record PageLink(string Text, string Url, string Context = "");
 
 /// <summary>A single web-search result.</summary>
 public sealed record SearchResult(string Title, string Url, string Snippet);

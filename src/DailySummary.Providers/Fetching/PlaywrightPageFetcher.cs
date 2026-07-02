@@ -46,26 +46,33 @@ public sealed class PlaywrightPageFetcher : IPageFetcher
         return new PageContent(url, title, text, links);
     }
 
-    // Anchors are lost in innerText, so pull them separately (headline text + absolute href) as
-    // "text\thref" strings — a robust shape to marshal from JS — then parse. Filters out nav/short links.
+    // Anchors are lost in innerText, so pull them separately as "headline\thref\tcontext" strings:
+    // the anchor text (headline), the absolute href, and a short blurb from the nearest article/card
+    // container (the dek/surrounding text) so the LLM knows what each link is about, not just its URL.
     private static async Task<IReadOnlyList<PageLink>> ExtractLinksAsync(IPage page)
     {
         try
         {
             var raw = await page.EvalOnSelectorAllAsync<string[]>("a[href]",
-                @"els => els
-                    .map(e => ((e.textContent || '').trim().replace(/\s+/g, ' ')) + '\t' + e.href)
-                    .filter(s => { const p = s.split('\t'); return p[0].length >= 25 && (p[1] || '').startsWith('http'); })
-                    .slice(0, 80)").ConfigureAwait(false);
+                @"els => els.map(e => {
+                    const head = (e.textContent || '').trim().replace(/\s+/g, ' ');
+                    const box = e.closest('article, li, section') || e.parentElement;
+                    let ctx = box ? (box.textContent || '').trim().replace(/\s+/g, ' ') : '';
+                    if (ctx.length > 200) ctx = ctx.slice(0, 200);
+                    return head + '\t' + e.href + '\t' + ctx;
+                  })
+                  .filter(s => { const p = s.split('\t'); return p[0].length >= 25 && (p[1] || '').startsWith('http'); })
+                  .slice(0, 80)").ConfigureAwait(false);
 
             var seen = new HashSet<string>();
             var links = new List<PageLink>();
             foreach (var s in raw)
             {
-                var tab = s.IndexOf('\t');
-                if (tab <= 0) continue;
-                var href = s[(tab + 1)..];
-                if (seen.Add(href)) links.Add(new PageLink(s[..tab], href));
+                var parts = s.Split('\t');
+                if (parts.Length < 2) continue;
+                var href = parts[1];
+                var context = parts.Length > 2 ? parts[2] : string.Empty;
+                if (seen.Add(href)) links.Add(new PageLink(parts[0], href, context));
             }
             return links;
         }
