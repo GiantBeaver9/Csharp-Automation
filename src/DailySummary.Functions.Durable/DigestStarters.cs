@@ -6,13 +6,14 @@ namespace DailySummary.Functions.Durable;
 
 /// <summary>
 /// Thin timer triggers that only KICK OFF the orchestration and return immediately.
-/// One per digest; the schedule binds from the same app settings as the timer host.
+/// Literal CRON + UseMonitor=false (the host resolves the attribute and can't read app.json;
+/// the blob schedule monitor isn't needed) — keep in sync with app.json digests[].schedule.
 /// </summary>
 public sealed class DigestStarters
 {
     [Function("MorningDigestStarter")]
     public async Task Morning(
-        [TimerTrigger("%MORNING_SCHEDULE%")] TimerInfo timer,
+        [TimerTrigger("0 0 6 * * *", UseMonitor = false)] TimerInfo timer,
         [DurableClient] DurableTaskClient client,
         FunctionContext ctx)
     {
@@ -22,7 +23,7 @@ public sealed class DigestStarters
 
     [Function("EveningDigestStarter")]
     public async Task Evening(
-        [TimerTrigger("%EVENING_SCHEDULE%")] TimerInfo timer,
+        [TimerTrigger("0 0 22 * * *", UseMonitor = false)] TimerInfo timer,
         [DurableClient] DurableTaskClient client,
         FunctionContext ctx)
     {
