@@ -1,4 +1,5 @@
 using DailySummary.Core.Abstractions;
+using DailySummary.Core.Constants;
 using DailySummary.Core.Models;
 
 namespace DailySummary.Providers.Gatherers;
@@ -25,6 +26,8 @@ public sealed class WebGatherer : ISectionGatherer
     {
         var s = config.SettingsAs<WebSettings>();
         var pieces = new List<RawPiece>();
+        var allLinks = new List<PageLink>();
+        var seen = new HashSet<string>();
 
         foreach (var url in s.Urls)
         {
@@ -33,20 +36,24 @@ public sealed class WebGatherer : ISectionGatherer
             {
                 var page = await _fetcher.FetchAsync(url, ct).ConfigureAwait(false);
                 var text = page.Text.Length > s.MaxChars ? page.Text[..s.MaxChars] : page.Text;
-                // Append the on-page links so the summarizer can cite the top stories by URL.
-                var links = page.Links.Count == 0
-                    ? string.Empty
-                    : "\n\nLINKS (headline — url — context):\n" +
-                      string.Join("\n", page.Links.Take(s.MaxLinks).Select(l =>
-                          string.IsNullOrEmpty(l.Context)
-                              ? $"- {l.Text} — {l.Url}"
-                              : $"- {l.Text} — {l.Url}\n    context: {l.Context}"));
-                pieces.Add(new RawPiece(config.Order, config.Heading, null, null, $"{page.Title}\n{text}{links}"));
+                // Content piece: clean page text only (the summary call shouldn't juggle links).
+                pieces.Add(new RawPiece(config.Order, config.Heading, null, null, $"{page.Title}\n{text}"));
+                foreach (var l in page.Links)
+                    if (seen.Add(l.Url)) allLinks.Add(l);
             }
             catch (Exception ex)
             {
                 pieces.Add(new RawPiece(config.Order, config.Heading, null, null, string.Empty, $"{url}: {ex.Message}"));
             }
+        }
+
+        // Separate "Selected Top Links" piece: its own clean LLM call (PromptOverride) over just the links.
+        if (allLinks.Count > 0)
+        {
+            var linksText = string.Join("\n", allLinks.Take(s.MaxLinks).Select(l =>
+                string.IsNullOrEmpty(l.Context) ? $"- {l.Text} — {l.Url}" : $"- {l.Text} — {l.Url} — {l.Context}"));
+            pieces.Add(new RawPiece(config.Order, config.Heading, "Selected Top Links", null, linksText,
+                PromptOverride: Prompts.LinkSelection));
         }
 
         return pieces;

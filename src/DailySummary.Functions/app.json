@@ -39,12 +39,12 @@
 
         { "type": "web", "heading": "US News", "order": 3, "summarizer": "openai",
           "timeoutSeconds": 300,
-          "prompt": "Summarize today's top US headlines as a few concise bullet points; where these sources report the same story differently or emphasize different angles, call out the divergence explicitly. Then a new paragraph beginning with the bold label **Selected Top Links**, followed by a markdown list of ONLY the 3-5 most impactful stories as [headline](url) (skip trivia), using ONLY entries from the LINKS list — pair headline and url exactly; never invent a URL.",
+          "prompt": "Summarize today's top US headlines as a few concise bullet points. Where these sources report the same story differently or emphasize different angles, call out the divergence explicitly.",
           "settings": { "urls": ["https://foxnews.com", "https://cnn.com", "https://msn.com", "https://breitbart.com"] } },
 
         { "type": "web", "heading": "World News", "order": 4, "summarizer": "openai",
           "timeoutSeconds": 300,
-          "prompt": "Summarize today's top world headlines as a few concise bullet points; where these sources report the same event differently or emphasize different angles, call out the divergence explicitly. Then a new paragraph beginning with the bold label **Selected Top Links**, followed by a markdown list of ONLY the 3-5 most impactful stories as [headline](url) (skip trivia), using ONLY entries from the LINKS list — pair headline and url exactly; never invent a URL.",
+          "prompt": "Summarize today's top world headlines as a few concise bullet points. Where these sources report the same event differently or emphasize different angles, call out the divergence explicitly.",
           "settings": { "urls": ["https://apnews.com/hub/world-news", "https://www.reuters.com/world/", "https://www.bbc.com/news/world", "https://www.aljazeera.com"] } },
 
         { "type": "web", "heading": "Finance", "order": 5, "summarizer": "openai",

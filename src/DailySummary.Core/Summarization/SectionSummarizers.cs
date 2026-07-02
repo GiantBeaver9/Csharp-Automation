@@ -17,8 +17,10 @@ public sealed class SectionSummarizers
     public SummarizePair For(SectionConfig config, RawPiece piece)
     {
         var summarizer = _registry.Resolve(config.Summarizer);
-        var basePrompt = config.Prompt ?? Prompts.Default(config.Type);
-        var prompt = Combine(basePrompt, piece.Instruction);
+        // A piece may carry its own self-contained prompt (e.g. the separate link-selection pass);
+        // otherwise use the section prompt (or type default) augmented with any per-piece instruction.
+        var prompt = piece.PromptOverride
+            ?? Combine(config.Prompt ?? Prompts.Default(config.Type), piece.Instruction);
 
         SummarizeFunc chunk = (input, ct) => summarizer.SummarizeAsync(prompt, input, ct);
         SummarizeFunc final = (input, ct) => summarizer.SummarizeAsync(prompt + Prompts.ReduceSuffix, input, ct);

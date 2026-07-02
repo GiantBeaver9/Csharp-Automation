@@ -22,18 +22,12 @@ public sealed class SummaryRenderer : ISummaryRenderer
 
         foreach (var section in summary.Sections.OrderBy(s => s.Order))
         {
-            // Sections with a single null sub-heading render flat; otherwise each entry gets a sub-heading.
-            var flat = section.Entries.Count == 1 && section.Entries[0].SubHeading is null;
-            if (flat)
-            {
-                sb.AppendLine(fmt(section.Heading, 2, section.Entries[0].Body));
-            }
-            else
-            {
-                sb.AppendLine(fmt(section.Heading, 2, string.Empty));
-                foreach (var entry in section.Entries)
-                    sb.AppendLine(fmt(entry.SubHeading ?? section.Heading, 3, entry.Body));
-            }
+            // Entries with no sub-heading are the section body (rendered under the H2);
+            // entries with a sub-heading (e.g. "Selected Top Links", per-day, per-question) become H3 blocks.
+            var mainBody = string.Join("\n\n", section.Entries.Where(e => e.SubHeading is null).Select(e => e.Body));
+            sb.AppendLine(fmt(section.Heading, 2, mainBody));
+            foreach (var entry in section.Entries.Where(e => e.SubHeading is not null))
+                sb.AppendLine(fmt(entry.SubHeading!, 3, entry.Body));
         }
         return sb.ToString().TrimEnd() + "\n";
     }

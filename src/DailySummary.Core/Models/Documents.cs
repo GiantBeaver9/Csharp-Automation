@@ -10,13 +10,16 @@ namespace DailySummary.Core.Models;
 /// <param name="Instruction">Optional per-piece prompt context (e.g. the question, or a prompt-section instruction).</param>
 /// <param name="Text">The raw gathered text to summarize. May be empty for prompt sections.</param>
 /// <param name="Error">When set, this piece failed to gather; renders an "unavailable" note.</param>
+/// <param name="PromptOverride">When set, this piece is summarized with THIS prompt alone (ignoring the
+/// section's prompt) — a self-contained, clean-context call. Used for the separate "Selected Top Links" pass.</param>
 public sealed record RawPiece(
     int SectionOrder,
     string Heading,
     string? SubHeading,
     string? Instruction,
     string Text,
-    string? Error = null);
+    string? Error = null,
+    string? PromptOverride = null);
 
 /// <summary>A fetched web page.</summary>
 public sealed record PageContent(string Url, string Title, string Text, IReadOnlyList<PageLink> Links);
