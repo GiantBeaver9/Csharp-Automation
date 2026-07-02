@@ -16,8 +16,10 @@ public sealed class EveningDigestFunction
         _log = log;
     }
 
+    // CRON is a literal (the host resolves the attribute; it can't read app.json). Keep in sync with
+    // app.json digests[name=="evening"].schedule, which documents the intended schedule.
     [Function(nameof(EveningDigestFunction))]
-    public async Task Run([TimerTrigger("%EVENING_SCHEDULE%")] TimerInfo timer, CancellationToken ct)
+    public async Task Run([TimerTrigger("0 0 22 * * *")] TimerInfo timer, CancellationToken ct)
     {
         _log.LogInformation("Running evening digest at {Time}", DateTimeOffset.UtcNow);
         await _orchestrator.RunAsync("evening", ct);
