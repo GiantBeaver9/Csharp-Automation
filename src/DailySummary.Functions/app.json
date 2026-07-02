@@ -43,7 +43,8 @@
 
         { "type": "web", "heading": "World News", "order": 4, "summarizer": "openai",
           "timeoutSeconds": 300,
-          "settings": { "urls": ["https://www.bbc.com/news", "https://www.reuters.com/world/", "https://www.aljazeera.com"] } },
+          "prompt": "Summarize today's top world headlines. Where these sources report the same event differently or emphasize different angles, call out the divergence explicitly.",
+          "settings": { "urls": ["https://apnews.com/hub/world-news", "https://www.reuters.com/world/", "https://www.bbc.com/news/world", "https://www.aljazeera.com"] } },
 
         { "type": "web", "heading": "Finance", "order": 5, "summarizer": "openai",
           "timeoutSeconds": 300,
