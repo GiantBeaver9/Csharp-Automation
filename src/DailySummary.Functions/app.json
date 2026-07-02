@@ -26,7 +26,7 @@
       "sections": [
         { "type": "weather", "heading": "Weather", "order": 0, "summarizer": "openai",
           "timeoutSeconds": 300,
-          "settings": { "latitude": 40.71, "longitude": -74.01, "units": "imperial" } },
+          "settings": { "latitude": 44.7972, "longitude": -106.9562, "units": "imperial" } },
 
         { "type": "web", "heading": "Programming News", "order": 1, "summarizer": "openai",
           "timeoutSeconds": 300,
@@ -39,6 +39,7 @@
 
         { "type": "web", "heading": "US News", "order": 3, "summarizer": "openai",
           "timeoutSeconds": 300,
+          "prompt": "Summarize today's top US headlines. Where these sources report the same story differently or emphasize different angles, call out the divergence explicitly.",
           "settings": { "urls": ["https://foxnews.com", "https://cnn.com", "https://msn.com", "https://breitbart.com"] } },
 
         { "type": "web", "heading": "World News", "order": 4, "summarizer": "openai",
@@ -50,7 +51,39 @@
           "timeoutSeconds": 300,
           "settings": { "urls": ["https://seekingalpha.com", "https://finance.yahoo.com", "https://investing.com"] } },
 
-        { "type": "rss", "heading": "Reddit", "order": 6, "summarizer": "openai",
+        { "type": "web", "heading": "Real Estate & Fix-and-Flip", "order": 6, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "prompt": "Summarize housing-market and real-estate-investing news, with emphasis on mortgage rates and anything relevant to fix-and-flip investors.",
+          "settings": { "urls": ["https://www.housingwire.com", "https://www.biggerpockets.com/blog",
+                                  "https://www.inman.com", "https://www.mortgagenewsdaily.com"] } },
+
+        { "type": "web", "heading": "Building & Construction", "order": 7, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          // "BNI = Builders International" read as construction-industry news; swap URLs for the exact site if needed.
+          "settings": { "urls": ["https://www.constructiondive.com", "https://www.builderonline.com", "https://www.nahb.org/news-and-economics"] } },
+
+        { "type": "web", "heading": "Aviation", "order": 8, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "settings": { "urls": ["https://simpleflying.com", "https://www.avweb.com", "https://www.flightglobal.com"] } },
+
+        { "type": "web", "heading": "Hotels & Hospitality", "order": 9, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "settings": { "urls": ["https://skift.com", "https://www.hospitalitynet.org", "https://www.hotelnewsresource.com"] } },
+
+        { "type": "web", "heading": "Businesses for Sale", "order": 10, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "prompt": "List notable businesses currently for sale from these listings — include asking price, location, and industry where available.",
+          // Regional listing pages (Wyoming). Narrow by industry/price by editing these URLs.
+          "settings": { "urls": ["https://www.bizbuysell.com/wyoming-businesses-for-sale/",
+                                  "https://www.businessesforsale.com/us/search/businesses-for-sale-in-wyoming"] } },
+
+        { "type": "web", "heading": "Sheridan, WY", "order": 11, "summarizer": "openai",
+          "timeoutSeconds": 300,
+          "prompt": "Summarize local Sheridan, Wyoming news. Then list the community events happening TODAY and over the NEXT 7 DAYS, each with its date.",
+          "settings": { "urls": ["https://sheridanmedia.com", "https://www.thesheridanpress.com",
+                                  "https://www.sheridanwyoming.org/events"] } },
+
+        { "type": "rss", "heading": "Reddit", "order": 12, "summarizer": "openai",
           "timeoutSeconds": 300,
           "settings": { "maxItemsPerFeed": 5, "since": "1d",
                         "feeds": ["https://www.reddit.com/r/all/top/.rss?t=day",
@@ -62,45 +95,45 @@
                                   "https://www.reddit.com/r/XboxSeriesX/top/.rss?t=day",
                                   "https://www.reddit.com/r/Spacemarine/top/.rss?t=day"] } },
 
-        // --- Multilingual: each summarizes IN the target language (per-section prompt override) ---
-        { "type": "web", "heading": "Español", "order": 7, "summarizer": "openai", "timeoutSeconds": 300,
+        // --- Multilingual: summarize IN the target language (per-section prompt override) ---
+        { "type": "web", "heading": "Español", "order": 13, "summarizer": "openai", "timeoutSeconds": 300,
           "prompt": "Resume los titulares principales en español, de forma concisa.",
           "settings": { "urls": ["https://elpais.com", "https://www.bbc.com/mundo"] } },
 
-        { "type": "web", "heading": "Français", "order": 8, "summarizer": "openai", "timeoutSeconds": 300,
+        { "type": "web", "heading": "Français", "order": 14, "summarizer": "openai", "timeoutSeconds": 300,
           "prompt": "Résume les principaux titres en français, de façon concise.",
           "settings": { "urls": ["https://www.lemonde.fr", "https://www.france24.com/fr/"] } },
 
-        { "type": "web", "heading": "Deutsch (lernen)", "order": 9, "summarizer": "openai", "timeoutSeconds": 300,
+        { "type": "web", "heading": "Deutsch (lernen)", "order": 15, "summarizer": "openai", "timeoutSeconds": 300,
           "prompt": "Summarize the top headlines in simple German, then add a one-line English gloss under each.",
           "settings": { "urls": ["https://www.spiegel.de", "https://www.dw.com/de/"] } },
 
-        { "type": "web", "heading": "Русский (учить)", "order": 10, "summarizer": "openai", "timeoutSeconds": 300,
+        { "type": "web", "heading": "Русский (учить)", "order": 16, "summarizer": "openai", "timeoutSeconds": 300,
           "prompt": "Summarize the top headlines in simple Russian, then add a one-line English gloss under each.",
           "settings": { "urls": ["https://meduza.io"] } },
 
-        { "type": "web", "heading": "Italiano", "order": 11, "summarizer": "openai", "timeoutSeconds": 300,
+        { "type": "web", "heading": "Italiano", "order": 17, "summarizer": "openai", "timeoutSeconds": 300,
           "prompt": "Riassumi i titoli principali in italiano, in modo conciso.",
           "settings": { "urls": ["https://www.corriere.it", "https://www.ansa.it"] } },
 
-        { "type": "web", "heading": "Português", "order": 12, "summarizer": "openai", "timeoutSeconds": 300,
+        { "type": "web", "heading": "Português", "order": 18, "summarizer": "openai", "timeoutSeconds": 300,
           "prompt": "Resuma as principais manchetes em português, de forma concisa.",
           "settings": { "urls": ["https://www.publico.pt", "https://g1.globo.com"] } },
 
-        { "type": "web", "heading": "Norsk (lære)", "order": 13, "summarizer": "openai", "timeoutSeconds": 300,
+        { "type": "web", "heading": "Norsk (lære)", "order": 19, "summarizer": "openai", "timeoutSeconds": 300,
           "prompt": "Summarize the top headlines in simple Norwegian, then add a one-line English gloss under each.",
           "settings": { "urls": ["https://www.nrk.no", "https://www.aftenposten.no"] } },
 
-        { "type": "web", "heading": "Madagascar", "order": 14, "summarizer": "openai", "timeoutSeconds": 300,
+        { "type": "web", "heading": "Madagascar", "order": 20, "summarizer": "openai", "timeoutSeconds": 300,
           // Malagasy-language sources online are scarce; these are mostly French-language Madagascar outlets.
           "prompt": "Résume l'actualité de Madagascar en français, de façon concise.",
           "settings": { "urls": ["https://www.madagascar-tribune.com", "https://lexpress.mg"] } },
 
-        { "type": "googleCalendar", "heading": "Calendar", "order": 15, "summarizer": "none",
+        { "type": "googleCalendar", "heading": "Calendar", "order": 21, "summarizer": "none",
           "timeoutSeconds": 300,
           "settings": { "icalUrlEnv": "GCAL_ICAL_URL", "views": ["today", "week"], "weekDays": 7 } },
 
-        { "type": "prompt", "heading": "Yesterday's Commits & PRs", "order": 16, "summarizer": "openai",
+        { "type": "prompt", "heading": "Yesterday's Commits & PRs", "order": 22, "summarizer": "openai",
           "timeoutSeconds": 300,
           "settings": {
             "mode": "enumerate",
