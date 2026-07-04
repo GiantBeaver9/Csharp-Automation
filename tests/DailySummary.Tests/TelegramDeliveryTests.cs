@@ -39,6 +39,25 @@ public class TelegramDeliveryTests
     }
 
     [Fact]
+    public void TryGetRetryAfter_Reads_The_Documented_429_Body()
+    {
+        // The exact shape Telegram returns on flood control.
+        var body = "{\"ok\":false,\"error_code\":429,\"description\":\"Too Many Requests: retry after 35\","
+                 + "\"parameters\":{\"retry_after\":35}}";
+        Assert.Equal(35, TelegramDelivery.TryGetRetryAfter(body));
+    }
+
+    [Theory]
+    [InlineData("{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request\"}")]  // no parameters
+    [InlineData("{\"parameters\":{}}")]                                               // parameters, no retry_after
+    [InlineData("Bad Gateway")]                                                       // non-JSON body
+    [InlineData("")]                                                                  // empty body
+    public void TryGetRetryAfter_Returns_Null_When_Absent_Or_Unparseable(string body)
+    {
+        Assert.Null(TelegramDelivery.TryGetRetryAfter(body));
+    }
+
+    [Fact]
     public void Never_Splits_A_Surrogate_Pair_Across_Chunks()
     {
         // A limit that lands the boundary exactly between the two halves of an emoji (2 UTF-16 units each).

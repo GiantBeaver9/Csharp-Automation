@@ -1,4 +1,6 @@
+using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using DailySummary.Core.Abstractions;
 using DailySummary.Core.Models;
 
@@ -15,6 +17,9 @@ public sealed class TelegramDelivery : IDeliveryChannel
     // Telegram's per-message limit, counted in UTF-16 code units (an emoji is 2). A C# string's Length is
     // already that count, so no re-encoding is needed — unlike the Python original, whose str is code points.
     private const int MessageLimit = 4096;
+
+    // 429 backoff is bounded so a persistently throttled bot can't retry forever.
+    private const int MaxRetries = 5;
 
     private readonly HttpClient _http;
 
@@ -39,16 +44,43 @@ public sealed class TelegramDelivery : IDeliveryChannel
         var url = $"https://api.telegram.org/bot{token}/sendMessage";
         foreach (var chunk in Chunks(doc.Markdown, MessageLimit))
         {
-            // Telegram documents chat_id as "Integer or String", so a numeric id or @channelusername both
-            // travel fine as a string. Anonymous payload matches how the summarizers POST JSON in this repo.
-            using var resp = await _http.PostAsJsonAsync(url, new { chat_id = cfg.ChatId, text = chunk }, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode)
+            var retries = 0;
+            var sent = false;
+            while (!sent)
             {
-                var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                // The url carries the bot token, so keep it out of the error — report status + Telegram's reason only.
-                throw new InvalidOperationException(
-                    $"Telegram sendMessage returned {(int)resp.StatusCode}: {Truncate(body, 500)}");
+                // Telegram documents chat_id as "Integer or String", so a numeric id or @channelusername
+                // both travel fine as a string. Anonymous payload matches how the summarizers POST JSON here.
+                using var resp = await _http.PostAsJsonAsync(
+                    url, new { chat_id = cfg.ChatId, text = chunk }, ct).ConfigureAwait(false);
+                if (resp.IsSuccessStatusCode)
+                {
+                    sent = true;
+                }
+                else
+                {
+                    var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+                    // 429 = flood control. Telegram returns the wait in parameters.retry_after; honor it
+                    // (plus jitter) and retry the SAME chunk, up to MaxRetries. Anything else throws.
+                    if (resp.StatusCode == HttpStatusCode.TooManyRequests &&
+                        retries < MaxRetries &&
+                        TryGetRetryAfter(body) is { } retryAfter)
+                    {
+                        retries++;
+                        await DelayWithJitter(TimeSpan.FromSeconds(retryAfter), ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        // The url carries the bot token, so keep it out of the error — status + reason only.
+                        throw new InvalidOperationException(
+                            $"Telegram sendMessage returned {(int)resp.StatusCode}: {Truncate(body, 500)}");
+                    }
+                }
             }
+
+            // Pace ~1 msg/sec to one chat (Telegram's per-chat limit), with jitter. Fires after every send,
+            // including the last — one idle second on a background job isn't worth a branch to skip it.
+            await DelayWithJitter(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
         }
     }
 
@@ -77,4 +109,23 @@ public sealed class TelegramDelivery : IDeliveryChannel
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
+
+    /// <summary>Adds 0–500 ms of jitter on top of a delay (only ever adds, so a 429 retry can't fire early).</summary>
+    private static Task DelayWithJitter(TimeSpan baseDelay, CancellationToken ct) =>
+        Task.Delay(baseDelay + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 500)), ct);
+
+    /// <summary>Reads parameters.retry_after (seconds) from a Telegram error body, or null if absent/non-JSON.</summary>
+    internal static int? TryGetRetryAfter(string body)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(body);
+            if (json.RootElement.TryGetProperty("parameters", out var p) &&
+                p.TryGetProperty("retry_after", out var r) &&
+                r.TryGetInt32(out var seconds))
+                return seconds;
+        }
+        catch (JsonException) { /* non-JSON body → no retry hint */ }
+        return null;
+    }
 }
