@@ -133,7 +133,11 @@ public sealed class GatherSummarizePipeline
     private async Task<string> FoldAsync(SectionConfig cfg, string? sub, List<PieceResult> group, CancellationToken ct)
     {
         var bodies = group.Where(r => !r.Failed).Select(r => r.Body).ToList();
-        if (bodies.Count == 0) return string.Join("\n", group.Select(r => r.Body)); // all failed → the notes
+        if (bodies.Count == 0)
+            // All failed → surface the notes, but collapse identical ones so a section doesn't repeat the
+            // same "unable to complete: <error>" line per piece (e.g. every piece failing while the LLM/host
+            // is down). Distinct keeps first-seen order and leaves genuinely different errors intact.
+            return string.Join("\n", group.Select(r => r.Body).Distinct());
         if (bodies.Count == 1) return bodies[0];
 
         // Mechanical join for passthrough + prompt sections; LLM reduce for the rest.

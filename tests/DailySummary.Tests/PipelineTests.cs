@@ -64,6 +64,26 @@ public class PipelineTests
     }
 
     [Fact]
+    public async Task All_Pieces_Failing_Identically_Renders_The_Note_Once()
+    {
+        // Same failure per piece (the LLM/host-down case) must not repeat the note N times.
+        var pieces = new[]
+        {
+            new RawPiece(0, "Web", null, null, "", Error: "boom"),
+            new RawPiece(0, "Web", null, null, "", Error: "boom"),
+            new RawPiece(0, "Web", null, null, "", Error: "boom")
+        };
+        var pipeline = Build(new FakeGatherer(SectionType.Web, pieces));
+        var (app, digest) = Config();
+
+        var result = await pipeline.RunAsync(digest, app, default);
+
+        var body = result.Sections.Single().Entries.Single().Body;
+        var occurrences = body.Split("unable to complete").Length - 1;
+        Assert.Equal(1, occurrences);
+    }
+
+    [Fact]
     public async Task Gatherer_Throwing_Does_Not_Abort_Run()
     {
         var pipeline = Build(new FakeGatherer(SectionType.Web, Array.Empty<RawPiece>(), throws: true));
