@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\DailySummary.Core\DailySummary.Core.csproj" />
+    <ProjectReference Include="..\..\src\DailySummary.Providers\DailySummary.Providers.csproj" />
   </ItemGroup>
 
 </Project>

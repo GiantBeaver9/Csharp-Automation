@@ -12,6 +12,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Expose internal helpers (e.g. TelegramDelivery.Chunks) to the unit tests. -->
+    <InternalsVisibleTo Include="DailySummary.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- RSS / Atom parsing (no browser) -->
     <PackageReference Include="System.ServiceModel.Syndication" Version="8.0.0" />
     <!-- Headed Firefox page capture -->

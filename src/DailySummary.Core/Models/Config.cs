@@ -65,7 +65,7 @@ public sealed class DigestConfig
 
 public sealed class DeliveryConfig
 {
-    /// <summary>Single-channel shorthand ("markdown" | "console" | "email").</summary>
+    /// <summary>Single-channel shorthand ("markdown" | "console" | "email" | "telegram").</summary>
     public string Channel { get; set; } = "console";
 
     /// <summary>Multi-channel: deliver to each (e.g. ["markdown","email"]). Takes precedence over <see cref="Channel"/>.</summary>
@@ -73,6 +73,7 @@ public sealed class DeliveryConfig
 
     public string OutputDir { get; set; } = "./out";
     public EmailDeliveryConfig? Email { get; set; }
+    public TelegramDeliveryConfig? Telegram { get; set; }
 
     /// <summary>The channels to deliver to — <see cref="Channels"/> if set, else the single <see cref="Channel"/>.</summary>
     public IReadOnlyList<string> ResolvedChannels() =>
@@ -86,6 +87,18 @@ public sealed class EmailDeliveryConfig
     public string SmtpHost { get; set; } = "";
     public int SmtpPort { get; set; } = 587;
     public string PasswordEnv { get; set; } = "SMTP_PASSWORD";
+}
+
+public sealed class TelegramDeliveryConfig
+{
+    /// <summary>Destination chat id (a user, group, or channel). Empty ⇒ Telegram delivery is skipped.</summary>
+    public string ChatId { get; set; } = "";
+
+    /// <summary>
+    /// Env var holding the bot token (from @BotFather). Never put the token in app.json — this names the
+    /// variable the delivery reads it from.
+    /// </summary>
+    public string TokenEnv { get; set; } = "TELEGRAM_BOT_TOKEN";
 }
 
 /// <summary>One section of a digest. <c>Settings</c> is a type-specific blob each gatherer parses.</summary>
