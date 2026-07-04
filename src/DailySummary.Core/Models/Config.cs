@@ -13,6 +13,7 @@ public enum SectionType
     GoogleCalendar,
     Question,
     Email,
+    Outlook,
     Prompt
 }
 
@@ -20,7 +21,14 @@ public enum SectionType
 public sealed class AppConfig
 {
     public ConcurrencyConfig Concurrency { get; set; } = new();
+
+    /// <summary>
+    /// Bound capacity of the gather→summarize handoff channel (backpressure). Gatherers block once this
+    /// many <c>RawPiece</c>s are queued ahead of the summarizer, capping memory when fetching outruns the
+    /// (usually slower) LLM. Clamped to a minimum of 1.
+    /// </summary>
     public int ChannelCapacity { get; set; } = 16;
+
     public BrowserConfig Browser { get; set; } = new();
 
     /// <summary>Named summarizer backends. A section's <c>Summarizer</c> names one of these (or "none").</summary>
@@ -29,8 +37,45 @@ public sealed class AppConfig
     /// <summary>Each digest is one scheduled run with its own sections and delivery.</summary>
     public List<DigestConfig> Digests { get; set; } = new();
 
+    /// <summary>
+    /// Optional: when the heavy compute (the LLM) lives on a separate machine, the durable orchestrator
+    /// wakes it (Wake-on-LAN) and waits for its server before running. Null/disabled = single-machine.
+    /// </summary>
+    public RemoteComputeConfig? RemoteCompute { get; set; }
+
     public DigestConfig? Digest(string name) =>
         Digests.FirstOrDefault(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>
+/// Wake-on-LAN + readiness gate for a remote compute node (e.g. a Pi orchestrator waking a GPU PC that
+/// hosts the LLM). Sleep is intentionally NOT here — the PC's own idle-sleep timer handles that, so a
+/// user sitting down keeps it awake; we only ever wake it.
+/// </summary>
+public sealed class RemoteComputeConfig
+{
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>The compute PC's NIC MAC (e.g. "AA:BB:CC:DD:EE:FF"). WoL target.</summary>
+    public string MacAddress { get; set; } = "";
+
+    /// <summary>Subnet broadcast address the magic packet is sent to (Pi and PC must share the LAN).</summary>
+    public string BroadcastAddress { get; set; } = "255.255.255.255";
+
+    /// <summary>UDP port for the magic packet (7 or 9 are conventional).</summary>
+    public int WolPort { get; set; } = 9;
+
+    /// <summary>
+    /// URL that returns success once the LLM *server* is accepting requests — LM Studio's model list.
+    /// Set to the PC's LAN IP. A loaded model is NOT required; the model loads on the first summarize call.
+    /// </summary>
+    public string ReadinessUrl { get; set; } = "http://localhost:1234/v1/models";
+
+    /// <summary>Give up waiting after this many seconds and run anyway (failed sections stay isolated).</summary>
+    public int MaxWaitSeconds { get; set; } = 180;
+
+    /// <summary>Seconds between readiness polls (a durable timer, so it survives orchestrator replay).</summary>
+    public int PollSeconds { get; set; } = 5;
 }
 
 public sealed class ConcurrencyConfig

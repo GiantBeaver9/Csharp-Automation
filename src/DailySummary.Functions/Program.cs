@@ -50,6 +50,7 @@ var host = new HostBuilder()
         services.AddSingleton<ISectionGatherer, GoogleCalendarGatherer>();
         services.AddSingleton<ISectionGatherer, QuestionGatherer>();
         services.AddSingleton<ISectionGatherer, EmailGatherer>();
+        services.AddSingleton<ISectionGatherer, OutlookGatherer>();
         services.AddSingleton<ISectionGatherer, PromptGatherer>();
         services.AddSingleton<SectionGathererRegistry>();
 

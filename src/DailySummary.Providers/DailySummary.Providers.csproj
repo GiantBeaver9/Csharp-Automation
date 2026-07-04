@@ -12,6 +12,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Expose internal pure helpers (e.g. OutlookGatherer URL/format) to the test project. -->
+    <InternalsVisibleTo Include="DailySummary.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- RSS / Atom parsing (no browser) -->
     <PackageReference Include="System.ServiceModel.Syndication" Version="8.0.0" />
     <!-- Headed Firefox page capture -->
@@ -22,6 +27,11 @@
     <PackageReference Include="MimeKit" Version="4.13.0" />
     <!-- Google Calendar secret iCal parsing -->
     <PackageReference Include="Ical.Net" Version="4.2.0" />
+    <!-- Outlook via Microsoft Graph: delegated device-code auth + silent refresh (no client secret).
+         Pinned to 1.13.1 (Azure.Core 1.44.1) deliberately: newer Azure.Identity pulls a .NET 10-era
+         Azure.Core whose transitive Microsoft.Extensions.* 10.x clashes with this repo's net8 pins
+         (NU1605 downgrade). 1.44.1 has no Microsoft.Extensions.* deps and the APIs we use are stable. -->
+    <PackageReference Include="Azure.Identity" Version="1.13.1" />
     <!-- Local Whisper transcription for podcasts -->
     <PackageReference Include="Whisper.net" Version="1.7.1" />
     <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
