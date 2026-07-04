@@ -51,7 +51,11 @@ public sealed class OpenAiCompatibleSummarizer : ISummarizer
         using var resp = await _http.SendAsync(msg, ct).ConfigureAwait(false);
         resp.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
-        return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString()
-            ?? string.Empty;
+        // Guard the array — some OpenAI-compatible servers return an empty choices[] (content filter,
+        // empty completion). Mirrors ClaudeSummarizer's length guard rather than crashing on [0].
+        var choices = doc.RootElement.GetProperty("choices");
+        return choices.GetArrayLength() > 0
+            ? choices[0].GetProperty("message").GetProperty("content").GetString() ?? string.Empty
+            : string.Empty;
     }
 }

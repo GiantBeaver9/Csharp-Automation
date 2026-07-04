@@ -85,7 +85,12 @@ public sealed class GatherSummarizePipeline
                     // Single atomic call (no chunking) for instruction-only or self-prompted pieces
                     // (prompt sections, and the "Selected Top Links" pass — chunking a link list is wasteful
                     // and would fragment the selection). Everything else uses the chunked map-reduce.
-                    var singleCall = string.IsNullOrEmpty(piece.Text) || piece.PromptOverride is not null;
+                    // Passthrough ("none") has no token limit, so chunking it is pointless — and harmful:
+                    // re-joining overlapping windows duplicates ~100 chars at each seam. FoldAsync already
+                    // treats passthrough specially; keep the consumer consistent.
+                    var singleCall = string.IsNullOrEmpty(piece.Text)
+                        || piece.PromptOverride is not null
+                        || SummarizerRegistry.IsPassthrough(section.Summarizer);
                     var body = singleCall
                         ? await WithTimeout(t => pair.Chunk(piece.Text, t), section.TimeoutSeconds, ct).ConfigureAwait(false)
                         : await WithTimeout(t => _chunked.SummarizeAsync(piece.Text, pair.Chunk, pair.Final, t),

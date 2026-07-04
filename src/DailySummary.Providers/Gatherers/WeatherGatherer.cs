@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using DailySummary.Core.Abstractions;
@@ -25,9 +26,12 @@ public sealed class WeatherGatherer : ISectionGatherer
     {
         var s = config.SettingsAs<WeatherSettings>();
         var unit = s.Units.Equals("imperial", StringComparison.OrdinalIgnoreCase) ? "fahrenheit" : "celsius";
+        // Invariant formatting — a decimal-comma locale would otherwise send "52,5" and Open-Meteo 400s.
+        var lat = s.Latitude.ToString(CultureInfo.InvariantCulture);
+        var lon = s.Longitude.ToString(CultureInfo.InvariantCulture);
         var url =
             "https://api.open-meteo.com/v1/forecast" +
-            $"?latitude={s.Latitude}&longitude={s.Longitude}" +
+            $"?latitude={lat}&longitude={lon}" +
             "&current=temperature_2m,weather_code,wind_speed_10m" +
             "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code" +
             $"&timezone=auto&temperature_unit={unit}";
@@ -43,7 +47,11 @@ public sealed class WeatherGatherer : ISectionGatherer
                       $"wind {current.GetProperty("wind_speed_10m").GetDouble()}.");
         sb.AppendLine($"High: {daily.GetProperty("temperature_2m_max")[0].GetDouble()}°, " +
                       $"Low: {daily.GetProperty("temperature_2m_min")[0].GetDouble()}°.");
-        sb.AppendLine($"Precipitation chance: {daily.GetProperty("precipitation_probability_max")[0].GetInt32()}%.");
+        // Open-Meteo returns null for precipitation_probability_max at some locations/times — GetInt32() on
+        // a JSON null throws, so guard the value kind and fall back to "n/a".
+        var precip = daily.GetProperty("precipitation_probability_max")[0];
+        var precipText = precip.ValueKind == JsonValueKind.Number ? $"{precip.GetInt32()}%" : "n/a";
+        sb.AppendLine($"Precipitation chance: {precipText}.");
         sb.AppendLine($"Conditions: {Wmo(daily.GetProperty("weather_code")[0].GetInt32())}.");
 
         return new[] { new RawPiece(config.Order, config.Heading, null, null, sb.ToString()) };
