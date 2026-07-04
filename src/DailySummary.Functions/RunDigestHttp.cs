@@ -41,7 +41,8 @@ public sealed class RunDigestHttp
         {
             _log.LogError(ex, "Digest '{Digest}' failed", digest);
             var err = req.CreateResponse(HttpStatusCode.InternalServerError);
-            await err.WriteStringAsync($"Digest '{digest}' failed: {ex.Message}");
+            // Anonymous endpoint — don't echo ex.Message (can carry SMTP errors, paths, connection strings).
+            await err.WriteStringAsync($"Digest '{digest}' failed — check the logs.");
             return err;
         }
     }

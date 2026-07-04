@@ -2,6 +2,7 @@ using DailySummary.Core.Abstractions;
 using DailySummary.Core.Models;
 using DailySummary.Core.Pipeline;
 using DailySummary.Core.Summarization;
+using DailySummary.Providers.Summarizers;
 using Xunit;
 
 namespace DailySummary.Tests;
@@ -61,6 +62,35 @@ public class PipelineTests
 
         var body = result.Sections.Single().Entries.Single().Body;
         Assert.Contains("unable to complete", body);
+    }
+
+    [Fact]
+    public async Task Passthrough_Section_Emits_Long_Text_Verbatim()
+    {
+        // A "none" (passthrough) section must NOT be chunked: chunking re-joins overlapping windows,
+        // duplicating ~100 chars at each seam. Text longer than MaxChunkChars (3000) would trigger it,
+        // so this text (3500 chars) reproduces the bug if the passthrough bypass regresses.
+        var text = new string('x', 3500) + "END";
+        var gatherers = new SectionGathererRegistry(
+            new ISectionGatherer[] { new FakeGatherer(SectionType.Web, new[] { new RawPiece(0, "Web", null, null, text) }) });
+        var summarizers = new SummarizerRegistry(new ISummarizer[] { new PassthroughSummarizer() });
+        var pipeline = new GatherSummarizePipeline(
+            gatherers, new SectionSummarizers(summarizers), summarizers, new ChunkedSummarizer());
+
+        var app = new AppConfig { Concurrency = new() { Fetch = 1, Summarize = 1 }, ChannelCapacity = 8 };
+        var digest = new DigestConfig
+        {
+            Name = "t",
+            Sections =
+            {
+                new SectionConfig { Type = SectionType.Web, Heading = "Web", Order = 0, Summarizer = "none", TimeoutSeconds = 5 }
+            }
+        };
+
+        var result = await pipeline.RunAsync(digest, app, default);
+
+        var body = result.Sections.Single().Entries.Single().Body;
+        Assert.Equal(text, body); // verbatim — no duplicated overlap, no injected separators
     }
 
     [Fact]
