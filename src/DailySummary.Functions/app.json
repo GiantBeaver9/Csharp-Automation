@@ -21,6 +21,10 @@
         "email": {
           "to": "adamnash19@gmail.com", "from": "adamnash19@gmail.com",
           "smtpHost": "smtp.gmail.com", "smtpPort": 587, "passwordEnv": "SMTP_PASSWORD"
+        },
+        "telegram": {
+          "chatId": "",
+          "tokenEnv": "TELEGRAM_BOT_TOKEN"
         }
       },
       "sections": [

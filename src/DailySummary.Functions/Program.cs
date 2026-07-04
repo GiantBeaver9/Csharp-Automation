@@ -59,6 +59,7 @@ var host = new HostBuilder()
         services.AddSingleton<IDeliveryChannel, ConsoleDelivery>();
         services.AddSingleton<IDeliveryChannel, MarkdownFileDelivery>();
         services.AddSingleton<IDeliveryChannel, EmailDelivery>();
+        services.AddSingleton<IDeliveryChannel, TelegramDelivery>();
         services.AddSingleton<ISummaryOrchestrator, SummaryOrchestrator>();
     })
     .Build();
