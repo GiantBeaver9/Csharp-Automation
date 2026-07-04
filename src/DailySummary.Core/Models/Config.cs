@@ -21,7 +21,14 @@ public enum SectionType
 public sealed class AppConfig
 {
     public ConcurrencyConfig Concurrency { get; set; } = new();
+
+    /// <summary>
+    /// Bound capacity of the gather→summarize handoff channel (backpressure). Gatherers block once this
+    /// many <c>RawPiece</c>s are queued ahead of the summarizer, capping memory when fetching outruns the
+    /// (usually slower) LLM. Clamped to a minimum of 1.
+    /// </summary>
     public int ChannelCapacity { get; set; } = 16;
+
     public BrowserConfig Browser { get; set; } = new();
 
     /// <summary>Named summarizer backends. A section's <c>Summarizer</c> names one of these (or "none").</summary>
