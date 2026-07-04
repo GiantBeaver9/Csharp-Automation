@@ -17,6 +17,10 @@ artifacts/
 # Digest output
 out/
 
+# Outlook/Graph delegated-auth artifacts (contain account tokens — never commit)
+.outlook-auth.json
+*.outlook-auth.json
+
 # OS
 .DS_Store
 Thumbs.db

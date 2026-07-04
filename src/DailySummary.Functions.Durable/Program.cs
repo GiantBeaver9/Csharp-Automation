@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using DailySummary.Core;
 using DailySummary.Core.Abstractions;
 using DailySummary.Core.Models;
 using DailySummary.Core.Pipeline;
@@ -24,13 +23,10 @@ var host = new HostBuilder()
         services.AddSingleton(app.Browser);
         services.AddSingleton<HttpClient>();
 
-        // Summarizers (named): claude, ollama, none.
-        services.AddSingleton<ISummarizer>(sp =>
-            new OllamaSummarizer(sp.GetRequiredService<HttpClient>(), Cfg(app, "ollama")));
-        services.AddSingleton<ISummarizer>(sp =>
-            new ClaudeSummarizer(sp.GetRequiredService<HttpClient>(), Cfg(app, "claude")));
-        services.AddSingleton<ISummarizer>(sp =>
-            new OpenAiCompatibleSummarizer(sp.GetRequiredService<HttpClient>(), Cfg(app, "openai")));
+        // Summarizers (named): claude, ollama, openai (LM Studio), none.
+        services.AddSingleton<ISummarizer>(sp => new OllamaSummarizer(sp.GetRequiredService<HttpClient>(), Cfg(app, "ollama")));
+        services.AddSingleton<ISummarizer>(sp => new ClaudeSummarizer(sp.GetRequiredService<HttpClient>(), Cfg(app, "claude")));
+        services.AddSingleton<ISummarizer>(sp => new OpenAiCompatibleSummarizer(sp.GetRequiredService<HttpClient>(), Cfg(app, "openai")));
         services.AddSingleton<ISummarizer, PassthroughSummarizer>();
         services.AddSingleton<SummarizerRegistry>();
         services.AddSingleton<SectionSummarizers>();
@@ -54,13 +50,11 @@ var host = new HostBuilder()
         services.AddSingleton<ISectionGatherer, PromptGatherer>();
         services.AddSingleton<SectionGathererRegistry>();
 
-        // Pipeline / render / deliver / orchestrate.
-        services.AddSingleton<GatherSummarizePipeline>();
+        // Render + deliver (used by activities; the orchestrator does the deterministic fold).
         services.AddSingleton<ISummaryRenderer, SummaryRenderer>();
         services.AddSingleton<IDeliveryChannel, ConsoleDelivery>();
         services.AddSingleton<IDeliveryChannel, MarkdownFileDelivery>();
         services.AddSingleton<IDeliveryChannel, EmailDelivery>();
-        services.AddSingleton<ISummaryOrchestrator, SummaryOrchestrator>();
     })
     .Build();
 
@@ -78,7 +72,6 @@ static AppConfig LoadAppConfig()
         AllowTrailingCommas = true,
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
-    var json = File.ReadAllText(path);
-    return JsonSerializer.Deserialize<AppConfig>(json, options)
+    return JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(path), options)
         ?? throw new InvalidOperationException("app.json could not be parsed.");
 }
