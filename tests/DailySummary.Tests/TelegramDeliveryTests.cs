@@ -9,6 +9,15 @@ public class TelegramDeliveryTests
     public void Empty_Or_Whitespace_Text_Yields_No_Chunks()
     {
         Assert.Empty(TelegramDelivery.Chunks("", 4096));
+        Assert.Empty(TelegramDelivery.Chunks("   \n\t", 4096));   // whitespace-only is not worth a blank Telegram send
+    }
+
+    [Fact]
+    public void Chunks_Rejects_A_Limit_Below_Two()
+    {
+        // A surrogate pair is 2 UTF-16 units, so limit < 2 can't make progress — reject it up front.
+        // .ToList() forces the iterator to run so the guard actually throws.
+        Assert.Throws<ArgumentOutOfRangeException>(() => TelegramDelivery.Chunks("ab", 1).ToList());
     }
 
     [Fact]

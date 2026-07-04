@@ -1,5 +1,4 @@
 using System.Net.Http.Json;
-using System.Text.Json.Serialization;
 using DailySummary.Core.Abstractions;
 using DailySummary.Core.Models;
 
@@ -28,22 +27,21 @@ public sealed class TelegramDelivery : IDeliveryChannel
         var cfg = config.Telegram
             ?? throw new InvalidOperationException("delivery.telegram must be set when channel is 'telegram'.");
 
+        // No chat configured → nothing to deliver to; skip silently.
+        if (string.IsNullOrWhiteSpace(cfg.ChatId))
+            return;
+
         var token = Environment.GetEnvironmentVariable(cfg.TokenEnv);
         if (string.IsNullOrWhiteSpace(token))
             throw new InvalidOperationException(
                 $"Telegram bot token env var '{cfg.TokenEnv}' is empty. Create a bot with @BotFather and set it.");
 
-        var chatId = string.IsNullOrWhiteSpace(cfg.ChatId)
-            ? Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID")
-            : cfg.ChatId;
-        if (string.IsNullOrWhiteSpace(chatId))
-            throw new InvalidOperationException(
-                "Telegram chat id is not set (delivery.telegram.chatId or the TELEGRAM_CHAT_ID env var).");
-
         var url = $"https://api.telegram.org/bot{token}/sendMessage";
         foreach (var chunk in Chunks(doc.Markdown, MessageLimit))
         {
-            using var resp = await _http.PostAsJsonAsync(url, new SendMessage(chatId, chunk), ct).ConfigureAwait(false);
+            // Telegram documents chat_id as "Integer or String", so a numeric id or @channelusername both
+            // travel fine as a string. Anonymous payload matches how the summarizers POST JSON in this repo.
+            using var resp = await _http.PostAsJsonAsync(url, new { chat_id = cfg.ChatId, text = chunk }, ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -61,7 +59,9 @@ public sealed class TelegramDelivery : IDeliveryChannel
     /// </summary>
     internal static IEnumerable<string> Chunks(string text, int limit)
     {
-        if (string.IsNullOrEmpty(text)) yield break;
+        if (limit < 2) throw new ArgumentOutOfRangeException(
+            nameof(limit), "limit must be >= 2 (a surrogate pair is 2 UTF-16 units).");
+        if (string.IsNullOrWhiteSpace(text)) yield break;
 
         var i = 0;
         while (i < text.Length)
@@ -77,8 +77,4 @@ public sealed class TelegramDelivery : IDeliveryChannel
     }
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";
-
-    private sealed record SendMessage(
-        [property: JsonPropertyName("chat_id")] string ChatId,
-        [property: JsonPropertyName("text")] string Text);
 }

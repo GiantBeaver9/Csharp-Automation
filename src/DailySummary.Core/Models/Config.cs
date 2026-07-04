@@ -91,10 +91,7 @@ public sealed class EmailDeliveryConfig
 
 public sealed class TelegramDeliveryConfig
 {
-    /// <summary>
-    /// Destination chat id (a user, group, or channel). Falls back to the <c>TELEGRAM_CHAT_ID</c> env var
-    /// when left empty, so it can be kept out of app.json alongside the token.
-    /// </summary>
+    /// <summary>Destination chat id (a user, group, or channel). Empty ⇒ Telegram delivery is skipped.</summary>
     public string ChatId { get; set; } = "";
 
     /// <summary>
